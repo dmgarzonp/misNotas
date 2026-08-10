@@ -298,3 +298,30 @@ def test_apply_handwritten_font(qapp, temp_repo, qtbot):
     cursor = window.content_edit.textCursor()
     font_family = cursor.charFormat().fontFamily()
     assert "Caveat" in font_family
+
+
+def test_youtube_link_paste_and_click_handler(qapp, temp_repo, qtbot):
+    from PyQt6.QtCore import QMimeData, QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+
+    window = NoteWindow()
+    qtbot.addWidget(window)
+    _ = NoteController(view=window, repository=temp_repo)
+
+    mime_data = QMimeData()
+    mime_data.setText("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    window.content_edit.insertFromMimeData(mime_data)
+    qtbot.wait(100)
+
+    html = window.get_content_html()
+    assert "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg" in html
+
+    evt = QMouseEvent(
+        QMouseEvent.Type.MouseButtonRelease,
+        QPointF(10.0, 10.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.content_edit.mouseReleaseEvent(evt)
