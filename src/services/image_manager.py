@@ -1,20 +1,37 @@
 """Image Manager service for Mis Apuntes application.
 
 Handles local copying, storage, and file URL formatting for images
-inserted into notes to prevent broken image links.
+inserted into notes to prevent broken image links using QStandardPaths.
 """
 
 import os
 import shutil
 import uuid
 from typing import Optional
+from PyQt6.QtCore import QStandardPaths
+from src.interfaces.services import IImageManager
 
 
-class ImageManager:
-    """Manages local storage of note image attachments in data/images directory."""
+def get_default_image_storage_dir() -> str:
+    """Resolves standard Linux AppData location for image assets (~/.local/share/misNotas/images)."""
+    base_dir = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppDataLocation
+    )
+    if not base_dir:
+        base_dir = os.path.expanduser("~/.local/share/misNotas")
+    img_dir = os.path.join(base_dir, "images")
+    os.makedirs(img_dir, exist_ok=True)
+    return img_dir
 
-    def __init__(self, storage_dir: str = "data/images") -> None:
-        self.storage_dir = os.path.abspath(storage_dir)
+
+class ImageManager(IImageManager):
+    """Manages local storage of note image attachments using QStandardPaths."""
+
+    def __init__(self, storage_dir: Optional[str] = None) -> None:
+        if storage_dir is None:
+            self.storage_dir = get_default_image_storage_dir()
+        else:
+            self.storage_dir = os.path.abspath(storage_dir)
         os.makedirs(self.storage_dir, exist_ok=True)
 
     def import_image(self, original_path: str) -> Optional[str]:

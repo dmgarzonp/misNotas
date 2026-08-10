@@ -12,6 +12,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Set
 
+from PyQt6.QtCore import QStandardPaths
+from src.interfaces.note_repository import INoteRepository
+
 logger = logging.getLogger("mis_apuntes.model")
 
 
@@ -53,11 +56,25 @@ class Note:
         return {tag.lower() for tag in raw_tags}
 
 
-class NoteRepository:
+def get_default_db_path() -> str:
+    """Resolves standard Linux AppData location for mis_apuntes.db (~/.local/share/misNotas/mis_apuntes.db)."""
+    base_dir = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppDataLocation
+    )
+    if not base_dir:
+        base_dir = os.path.expanduser("~/.local/share/misNotas")
+    os.makedirs(base_dir, exist_ok=True)
+    return os.path.join(base_dir, "mis_apuntes.db")
+
+
+class NoteRepository(INoteRepository):
     """Thread-safe SQLite repository managing Note entities with WAL mode."""
 
-    def __init__(self, db_path: str = "mis_apuntes.db") -> None:
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None) -> None:
+        if db_path is None:
+            self.db_path = get_default_db_path()
+        else:
+            self.db_path = db_path
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -315,3 +332,28 @@ class NoteRepository:
                     "Intento de eliminar nota ID=%d no encontrada en SQLite.", note_id
                 )
             return success
+
+    def search_notes(self, query: str) -> List[Note]:
+        """Searches notes by title or content substring."""
+        if not query.strip():
+            return self.get_all_notes()
+        q = f"%{query.strip()}%"
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, title, content, content_html, theme, pinned, is_locked, tags, background_style, width, height, created_at, updated_at
+                FROM notes
+                WHERE title LIKE ? OR content LIKE ?
+                ORDER BY pinned DESC, datetime(updated_at) DESC, id DESC;
+                """,
+                (q, q),
+            )
+            return [self._row_to_note(row) for row in cursor.fetchall()]
+
+    def get_notes_by_tag(self, tag: str) -> List[Note]:
+        """Filters notes containing specific hashtag."""
+        if not tag.strip():
+            return self.get_all_notes()
+        clean_tag = tag.lstrip("#").strip()
+        all_notes = self.get_all_notes()
+        return [n for n in all_notes if clean_tag.lower() in n.extract_hashtags()]

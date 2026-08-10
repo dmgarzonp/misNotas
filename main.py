@@ -34,7 +34,7 @@ def main() -> None:
     tray_manager = QuickNoteManager(app)
 
     # Initialize MVC Stack
-    repository = NoteRepository("mis_apuntes.db")
+    repository = NoteRepository()
     view = NoteWindow()
     controller = NoteController(
         view=view, repository=repository, tray_manager=tray_manager

@@ -7,15 +7,18 @@ to authenticate the user via system credentials when accessing protected notes.
 import os
 import subprocess
 from typing import Optional
+from src.interfaces.services import IAuthService
 
 
-class AuthService:
+class AuthService(IAuthService):
     """Service providing system authentication using Ubuntu's native PolicyKit GUI dialog."""
 
     def __init__(self, override_auth: Optional[bool] = None) -> None:
         self.override_auth = override_auth
 
-    def authenticate_user(self, message: str = "Desbloquear Nota Protegida") -> bool:
+    def authenticate_user(
+        self, reason_prompt: str = "Desbloquear Nota Protegida"
+    ) -> bool:
         """Triggers native Ubuntu PolicyKit GUI password dialog using pkexec.
 
         Returns True if the user successfully enters their system password, False otherwise.

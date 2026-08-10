@@ -103,3 +103,16 @@ def test_note_geometry_persistence(temp_repo):
     assert updated is not None
     assert updated.width == 520
     assert updated.height == 410
+
+
+def test_inote_repository_interface_compliance(temp_repo):
+    from src.interfaces.note_repository import INoteRepository
+
+    assert isinstance(temp_repo, INoteRepository)
+
+
+def test_qstandardpaths_default_db_location():
+    from src.models.note_model import get_default_db_path
+
+    db_path = get_default_db_path()
+    assert db_path.endswith("mis_apuntes.db")

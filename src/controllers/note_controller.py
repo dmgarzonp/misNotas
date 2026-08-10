@@ -5,11 +5,14 @@ ImageManager, PDFExporter, and NoteRepository model operations.
 """
 
 import os
+import logging
 from typing import List, Optional, Set
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
+from src.interfaces.note_repository import INoteRepository
+from src.interfaces.services import IAuthService, IImageManager
 from src.models.note_model import Note, NoteRepository
 from src.services.auth_service import AuthService
 from src.services.global_shortcut import QuickNoteManager
@@ -17,6 +20,8 @@ from src.services.image_manager import ImageManager
 from src.services.math_evaluator import MathEvaluator
 from src.services.pdf_exporter import PDFExporter
 from src.views.note_window import NoteWindow
+
+logger = logging.getLogger("mis_apuntes.controller")
 
 
 class NoteController(QObject):
@@ -42,7 +47,7 @@ class NoteController(QObject):
             cls._tray_connected = True
 
         try:
-            repo = NoteRepository("mis_apuntes.db")
+            repo = NoteRepository()
             notes = repo.get_all_notes()
             tray_manager.update_tray_menu(notes, None)
         except Exception:
@@ -54,7 +59,7 @@ class NoteController(QObject):
         if cls._active_controllers:
             cls._active_controllers[-1].spawn_new_note_window()
         else:
-            repo = NoteRepository("mis_apuntes.db")
+            repo = NoteRepository()
             new_note = repo.create_note(title="", content="", theme="honey")
             view = NoteWindow()
             ctrl = NoteController(
@@ -73,7 +78,7 @@ class NoteController(QObject):
         if cls._active_controllers:
             cls._active_controllers[-1].load_note(note_id)
         else:
-            repo = NoteRepository("mis_apuntes.db")
+            repo = NoteRepository()
             view = NoteWindow()
             ctrl = NoteController(
                 view=view,
@@ -91,7 +96,7 @@ class NoteController(QObject):
         if cls._active_controllers:
             cls._active_controllers[-1].delete_note_by_id(note_id)
         else:
-            repo = NoteRepository("mis_apuntes.db")
+            repo = NoteRepository()
             repo.delete_note(note_id)
             if cls._shared_tray_manager:
                 cls._shared_tray_manager.update_tray_menu(repo.get_all_notes(), None)
@@ -105,10 +110,10 @@ class NoteController(QObject):
     def __init__(
         self,
         view: NoteWindow,
-        repository: NoteRepository,
-        auth_service: Optional[AuthService] = None,
+        repository: INoteRepository,
+        auth_service: Optional[IAuthService] = None,
         tray_manager: Optional[QuickNoteManager] = None,
-        image_manager: Optional[ImageManager] = None,
+        image_manager: Optional[IImageManager] = None,
         note_id: Optional[int] = None,
     ) -> None:
         super().__init__()
