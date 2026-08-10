@@ -4,6 +4,7 @@ Initializes Qt application, high-DPI display attributes, SQLite database reposit
 view window, controller, and QuickNoteManager system tray integration.
 """
 
+import logging
 import sys
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
@@ -13,9 +14,17 @@ from src.models.note_model import NoteRepository
 from src.services.global_shortcut import QuickNoteManager
 from src.views.note_window import NoteWindow
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger("mis_apuntes")
+
 
 def main() -> None:
     """Bootstraps and launches Mis Apuntes application."""
+    logger.info("Iniciando aplicación Mis Apuntes...")
     app = QApplication(sys.argv)
     app.setApplicationName("Mis Apuntes")
     app.setOrganizationName("ProyectosAI")
@@ -40,6 +49,7 @@ def main() -> None:
 
     # Show Main Window on Startup
     show_and_activate()
+    logger.info("Aplicación iniciada y lista.")
 
     sys.exit(app.exec())
 

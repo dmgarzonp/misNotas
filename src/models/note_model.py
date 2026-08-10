@@ -4,12 +4,15 @@ Implements Note entity dataclass and NoteRepository for thread-safe
 SQLite persistence using WAL mode, atomic transactions, and auto-migrations.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime
+import logging
 import os
 import re
 import sqlite3
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import List, Optional, Set
+
+logger = logging.getLogger("mis_apuntes.model")
 
 
 @dataclass
@@ -25,6 +28,8 @@ class Note:
     is_locked: bool = False
     tags: str = ""
     background_style: str = "blank"  # "blank", "ruled", "grid"
+    width: int = 300
+    height: int = 280
     created_at: str = ""
     updated_at: str = ""
 
@@ -77,6 +82,8 @@ class NoteRepository:
                     is_locked INTEGER NOT NULL DEFAULT 0,
                     tags TEXT NOT NULL DEFAULT '',
                     background_style TEXT NOT NULL DEFAULT 'blank',
+                    width INTEGER NOT NULL DEFAULT 300,
+                    height INTEGER NOT NULL DEFAULT 280,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -91,9 +98,14 @@ class NoteRepository:
                 ("is_locked", "INTEGER NOT NULL DEFAULT 0"),
                 ("tags", "TEXT NOT NULL DEFAULT ''"),
                 ("background_style", "TEXT NOT NULL DEFAULT 'blank'"),
+                ("width", "INTEGER NOT NULL DEFAULT 300"),
+                ("height", "INTEGER NOT NULL DEFAULT 280"),
             ]
             for col_name, col_type in migrations:
                 if col_name not in columns:
+                    logger.info(
+                        "Migrando columna SQLite '%s' (%s)...", col_name, col_type
+                    )
                     conn.execute(f"ALTER TABLE notes ADD COLUMN {col_name} {col_type};")
             conn.commit()
 
@@ -111,6 +123,8 @@ class NoteRepository:
             background_style=(
                 row["background_style"] if "background_style" in row.keys() else "blank"
             ),
+            width=row["width"] if "width" in row.keys() else 300,
+            height=row["height"] if "height" in row.keys() else 280,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -140,6 +154,8 @@ class NoteRepository:
         content_html: str = "",
         theme: str = "honey",
         background_style: str = "blank",
+        width: int = 300,
+        height: int = 280,
     ) -> Note:
         """Creates and persists a new Note entity."""
         now = datetime.now().isoformat()
@@ -147,8 +163,8 @@ class NoteRepository:
             cursor = conn.execute(
                 """
                 INSERT INTO notes (
-                    title, content, content_html, theme, pinned, is_locked, tags, background_style, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 0, 0, '', ?, ?, ?);
+                    title, content, content_html, theme, pinned, is_locked, tags, background_style, width, height, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 0, 0, '', ?, ?, ?, ?, ?);
                 """,
                 (
                     title,
@@ -156,6 +172,8 @@ class NoteRepository:
                     content_html,
                     theme,
                     background_style,
+                    width,
+                    height,
                     now,
                     now,
                 ),
@@ -172,6 +190,8 @@ class NoteRepository:
                 is_locked=False,
                 tags="",
                 background_style=background_style,
+                width=width,
+                height=height,
                 created_at=now,
                 updated_at=now,
             )
@@ -185,6 +205,13 @@ class NoteRepository:
                 )
                 conn.commit()
 
+            logger.info(
+                "Creada nota ID=%d ('%s') [%dx%d]",
+                note_id,
+                note.display_title,
+                width,
+                height,
+            )
             return note
 
     def update_note(
@@ -197,6 +224,8 @@ class NoteRepository:
         pinned: bool = False,
         is_locked: bool = False,
         background_style: str = "blank",
+        width: int = 300,
+        height: int = 280,
     ) -> Optional[Note]:
         """Updates an existing Note entity with atomic transaction."""
         now = datetime.now().isoformat()
@@ -207,7 +236,7 @@ class NoteRepository:
             cursor = conn.execute(
                 """
                 UPDATE notes
-                SET title = ?, content = ?, content_html = ?, theme = ?, pinned = ?, is_locked = ?, tags = ?, background_style = ?, updated_at = ?
+                SET title = ?, content = ?, content_html = ?, theme = ?, pinned = ?, is_locked = ?, tags = ?, background_style = ?, width = ?, height = ?, updated_at = ?
                 WHERE id = ?;
                 """,
                 (
@@ -219,12 +248,21 @@ class NoteRepository:
                     1 if is_locked else 0,
                     tags,
                     background_style,
+                    width,
+                    height,
                     now,
                     note_id,
                 ),
             )
             conn.commit()
             if cursor.rowcount > 0:
+                logger.info(
+                    "Actualizada nota ID=%d ('%s') [%dx%d]",
+                    note_id,
+                    temp_note.display_title,
+                    width,
+                    height,
+                )
                 return self.get_note_by_id(note_id)
             return None
 
@@ -241,6 +279,8 @@ class NoteRepository:
                 pinned=not note.pinned,
                 is_locked=note.is_locked,
                 background_style=note.background_style,
+                width=note.width,
+                height=note.height,
             )
         return None
 
@@ -257,6 +297,8 @@ class NoteRepository:
                 pinned=note.pinned,
                 is_locked=not note.is_locked,
                 background_style=note.background_style,
+                width=note.width,
+                height=note.height,
             )
         return None
 
@@ -265,4 +307,11 @@ class NoteRepository:
         with self._get_connection() as conn:
             cursor = conn.execute("DELETE FROM notes WHERE id = ?;", (note_id,))
             conn.commit()
-            return cursor.rowcount > 0
+            success = cursor.rowcount > 0
+            if success:
+                logger.info("Eliminada nota ID=%d permanentemente de SQLite.", note_id)
+            else:
+                logger.warning(
+                    "Intento de eliminar nota ID=%d no encontrada en SQLite.", note_id
+                )
+            return success

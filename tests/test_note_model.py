@@ -79,3 +79,27 @@ def test_get_all_notes_ordering(temp_repo):
     notes = temp_repo.get_all_notes()
     assert len(notes) == 2
     assert notes[0].id == n2.id  # Pinned note comes first
+
+
+def test_note_geometry_persistence(temp_repo):
+    note = temp_repo.create_note(
+        title="Nota Geometría", content="Prueba", width=450, height=350
+    )
+    assert note.width == 450
+    assert note.height == 350
+
+    fetched = temp_repo.get_note_by_id(note.id)
+    assert fetched is not None
+    assert fetched.width == 450
+    assert fetched.height == 350
+
+    updated = temp_repo.update_note(
+        note_id=note.id,
+        title="Nota Geometría",
+        content="Prueba Modificada",
+        width=520,
+        height=410,
+    )
+    assert updated is not None
+    assert updated.width == 520
+    assert updated.height == 410

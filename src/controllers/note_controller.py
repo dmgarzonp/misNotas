@@ -27,6 +27,80 @@ class NoteController(QObject):
 
     # Active Controllers Registry for Multi-Window Sticky Notes
     _active_controllers: List["NoteController"] = []
+    _shared_tray_manager: Optional[QuickNoteManager] = None
+    _tray_connected: bool = False
+
+    @classmethod
+    def set_tray_manager(cls, tray_manager: QuickNoteManager) -> None:
+        """Attaches and connects QuickNoteManager signals globally to class handlers exactly once."""
+        cls._shared_tray_manager = tray_manager
+        if not cls._tray_connected:
+            tray_manager.quick_note_requested.connect(cls._on_tray_quick_note)
+            tray_manager.note_selected.connect(cls._on_tray_note_selected)
+            tray_manager.note_delete_requested.connect(cls._on_tray_note_delete)
+            tray_manager.tag_selected.connect(cls._on_tray_tag_selected)
+            cls._tray_connected = True
+
+        try:
+            repo = NoteRepository("mis_apuntes.db")
+            notes = repo.get_all_notes()
+            tray_manager.update_tray_menu(notes, None)
+        except Exception:
+            pass
+
+    @classmethod
+    def _on_tray_quick_note(cls) -> None:
+        """Handles tray quick note request exactly once across active controllers."""
+        if cls._active_controllers:
+            cls._active_controllers[-1].spawn_new_note_window()
+        else:
+            repo = NoteRepository("mis_apuntes.db")
+            new_note = repo.create_note(title="", content="", theme="honey")
+            view = NoteWindow()
+            ctrl = NoteController(
+                view=view,
+                repository=repo,
+                tray_manager=cls._shared_tray_manager,
+                note_id=new_note.id,
+            )
+            view.show()
+            view.raise_()
+            view.activateWindow()
+
+    @classmethod
+    def _on_tray_note_selected(cls, note_id: int) -> None:
+        """Handles tray note selection request exactly once across active controllers."""
+        if cls._active_controllers:
+            cls._active_controllers[-1].load_note(note_id)
+        else:
+            repo = NoteRepository("mis_apuntes.db")
+            view = NoteWindow()
+            ctrl = NoteController(
+                view=view,
+                repository=repo,
+                tray_manager=cls._shared_tray_manager,
+                note_id=note_id,
+            )
+            view.show()
+            view.raise_()
+            view.activateWindow()
+
+    @classmethod
+    def _on_tray_note_delete(cls, note_id: int) -> None:
+        """Handles tray note delete request exactly once across active controllers."""
+        if cls._active_controllers:
+            cls._active_controllers[-1].delete_note_by_id(note_id)
+        else:
+            repo = NoteRepository("mis_apuntes.db")
+            repo.delete_note(note_id)
+            if cls._shared_tray_manager:
+                cls._shared_tray_manager.update_tray_menu(repo.get_all_notes(), None)
+
+    @classmethod
+    def _on_tray_tag_selected(cls, tag: str) -> None:
+        """Handles tray tag selection request exactly once across active controllers."""
+        if cls._active_controllers:
+            cls._active_controllers[-1].filter_by_tag(tag)
 
     def __init__(
         self,
@@ -41,7 +115,9 @@ class NoteController(QObject):
         self.view = view
         self.repository = repository
         self.auth_service = auth_service or AuthService()
-        self.tray_manager = tray_manager
+        self.tray_manager = tray_manager or NoteController._shared_tray_manager
+        if tray_manager:
+            NoteController.set_tray_manager(tray_manager)
         self.image_manager = image_manager or ImageManager()
         self.math_evaluator = MathEvaluator()
 
@@ -75,11 +151,12 @@ class NoteController(QObject):
         self.refresh_sidebar()
 
     def _connect_signals(self) -> None:
-        """Subscribes to NoteWindow UI and Tray signals."""
+        """Subscribes to NoteWindow UI signals."""
         self.view.title_changed.connect(self._on_title_changed)
         self.view.content_changed.connect(self._on_content_changed)
         self.view.theme_changed.connect(self._on_theme_changed)
         self.view.background_style_changed.connect(self._on_background_style_changed)
+        self.view.window_resized.connect(self._on_window_resized)
         self.view.new_note_requested.connect(self.spawn_new_note_window)
         self.view.delete_note_requested.connect(self.delete_current_note)
         self.view.pin_requested.connect(self.toggle_pin_current_note)
@@ -92,22 +169,14 @@ class NoteController(QObject):
 
         # Sidebar Signals
         self.view.sidebar.note_selected.connect(self.load_note)
+        self.view.sidebar.delete_note_requested.connect(self.delete_note_by_id)
         self.view.sidebar.tag_selected.connect(self.filter_by_tag)
         self.view.sidebar.search_changed.connect(self.filter_by_search)
 
-        # Tray Signals
-        if self.tray_manager:
-            self.tray_manager.quick_note_requested.connect(self.spawn_new_note_window)
-            self.tray_manager.note_selected.connect(self.load_note)
-            self.tray_manager.note_delete_requested.connect(self.delete_note_by_id)
-            self.tray_manager.tag_selected.connect(self.filter_by_tag)
-
     def _load_or_create_default_note(self) -> None:
-        """Loads latest existing note or creates a new default note with empty title for placeholder."""
+        """Loads pinned notes or latest existing note, or creates a new default note."""
         notes = self.repository.get_all_notes()
-        if notes:
-            self.load_note(notes[0].id)  # type: ignore
-        else:
+        if not notes:
             self.current_note = self.repository.create_note(
                 title="",
                 content="Esta es tu primera nota rápida al estilo macOS Sequoia.\n\n"
@@ -118,6 +187,30 @@ class NoteController(QObject):
                 theme="honey",
             )
             self._sync_view_with_model()
+            return
+
+        pinned_notes = [n for n in notes if n.pinned and n.id is not None]
+        if pinned_notes:
+            self.load_note(pinned_notes[0].id)  # type: ignore
+            for p_note in pinned_notes[1:]:
+                if p_note.id is not None:
+                    already_open = any(
+                        ctrl.current_note and ctrl.current_note.id == p_note.id
+                        for ctrl in NoteController._active_controllers
+                    )
+                    if not already_open:
+                        new_view = NoteWindow()
+                        NoteController(
+                            view=new_view,
+                            repository=self.repository,
+                            auth_service=self.auth_service,
+                            tray_manager=self.tray_manager,
+                            image_manager=self.image_manager,
+                            note_id=p_note.id,
+                        )
+                        new_view.show()
+        elif notes[0].id is not None:
+            self.load_note(notes[0].id)
 
     def choose_and_insert_image(self) -> None:
         """Opens QFileDialog to select an image, imports it to local storage, and inserts HTML into editor."""
@@ -165,10 +258,10 @@ class NoteController(QObject):
                 )
 
     def load_note(self, note_id: int) -> None:
-        """Loads specific note by ID and brings its window to front (show, raise, activateWindow)."""
-        # Check if an existing open window is already displaying this note
+        """Loads specific note by ID in current window or brings existing open window to front."""
+        # Check if another open window is already displaying this note
         for ctrl in NoteController._active_controllers:
-            if ctrl.current_note and ctrl.current_note.id == note_id:
+            if ctrl != self and ctrl.current_note and ctrl.current_note.id == note_id:
                 ctrl.view.show()
                 ctrl.view.raise_()
                 ctrl.view.activateWindow()
@@ -191,22 +284,10 @@ class NoteController(QObject):
                 )
                 return
 
-        # If THIS controller already has an active note, spawn a new window for the requested note
-        if self.current_note is not None and self.current_note.id != note_id:
-            new_view = NoteWindow()
-            new_controller = NoteController(
-                view=new_view,
-                repository=self.repository,
-                auth_service=self.auth_service,
-                tray_manager=self.tray_manager,
-                image_manager=self.image_manager,
-                note_id=note_id,
-            )
-            new_view.show()
-            new_view.raise_()
-            new_view.activateWindow()
-            self._notify_all_controllers()
-            return
+        # Save current note before switching
+        if self.current_note and self.current_note.id != note_id:
+            self.save_timer.stop()
+            self._save_current_note()
 
         self.current_note = note
         self._sync_view_with_model()
@@ -227,8 +308,18 @@ class NoteController(QObject):
                 pinned=self.current_note.pinned,
                 is_locked=self.current_note.is_locked,
                 background_style=self.current_note.background_style,
+                width=self.current_note.width,
+                height=self.current_note.height,
             )
             self.view.set_status_text("Guardado")
+
+    def _on_window_resized(self, width: int, height: int) -> None:
+        """Handles window resize events, updates current_note geometry, and triggers save timer."""
+        if self.current_note:
+            if self.current_note.width != width or self.current_note.height != height:
+                self.current_note.width = width
+                self.current_note.height = height
+                self.save_timer.start()
 
     def refresh_sidebar(self) -> None:
         """Refreshes sidebar note items, hashtag tags, and system tray menu across all active windows."""
@@ -260,8 +351,9 @@ class NoteController(QObject):
         self.view.sidebar.populate_tags(list(all_tags))
 
         # Update System Tray Menu
-        if self.tray_manager:
-            self.tray_manager.update_tray_menu(notes, current_id)
+        tray = NoteController._shared_tray_manager or self.tray_manager
+        if tray:
+            tray.update_tray_menu(notes, current_id)
 
     def filter_by_tag(self, tag: str) -> None:
         """Filters notes list by hashtag."""
@@ -364,6 +456,9 @@ class NoteController(QObject):
         if not self.current_note:
             return
 
+        curr_w = self.view.width()
+        curr_h = self.view.height()
+
         if self.current_note.id is None:
             created = self.repository.create_note(
                 title=self.current_note.title,
@@ -371,6 +466,8 @@ class NoteController(QObject):
                 content_html=self.view.get_content_html(),
                 theme=self.current_note.theme,
                 background_style=self.current_note.background_style,
+                width=curr_w,
+                height=curr_h,
             )
             self.current_note = created
             self.note_created.emit(created.id)
@@ -384,6 +481,8 @@ class NoteController(QObject):
                 pinned=self.current_note.pinned,
                 is_locked=self.current_note.is_locked,
                 background_style=self.current_note.background_style,
+                width=curr_w,
+                height=curr_h,
             )
             if updated:
                 self.current_note = updated
@@ -404,10 +503,11 @@ class NoteController(QObject):
         NoteController._active_controllers = valid_controllers
 
         # Always update system tray menu even if no windows are open!
-        if self.tray_manager:
+        tray = NoteController._shared_tray_manager or self.tray_manager
+        if tray:
             notes = self.repository.get_all_notes()
             curr_id = self.current_note.id if self.current_note else None
-            self.tray_manager.update_tray_menu(notes, curr_id)
+            tray.update_tray_menu(notes, curr_id)
 
     def spawn_new_note_window(self) -> "NoteController":
         """Spawns a NEW separate floating NoteWindow next to or below active note window."""
@@ -452,29 +552,47 @@ class NoteController(QObject):
         self.save_timer.stop()
         if self in NoteController._active_controllers:
             NoteController._active_controllers.remove(self)
-        self.view.close()
+        try:
+            self.view.close()
+        except Exception:
+            pass
 
     def delete_note_by_id(self, note_id: int) -> None:
         """Deletes note permanently from SQLite database and updates all UI lists and tray menu."""
-        # Unregister and close any open window displaying this note WITHOUT re-saving!
-        for ctrl in list(NoteController._active_controllers):
-            if ctrl.current_note and ctrl.current_note.id == note_id:
-                ctrl.save_timer.stop()
-                ctrl.current_note = None
-                ctrl.close_window()
+        existing = self.repository.get_note_by_id(note_id)
+        if not existing:
+            self._notify_all_controllers()
+            return
+
+        controllers_viewing_note = [
+            ctrl
+            for ctrl in list(NoteController._active_controllers)
+            if ctrl.current_note and ctrl.current_note.id == note_id
+        ]
+        for ctrl in controllers_viewing_note:
+            ctrl.save_timer.stop()
 
         # Permanently delete from SQLite DB
         self.repository.delete_note(note_id)
-        self.note_deleted.emit(note_id)
 
-        # Refresh all active controllers AND tray menu
+        # Handle windows displaying the deleted note
+        for ctrl in controllers_viewing_note:
+            if len(NoteController._active_controllers) <= 1:
+                ctrl.current_note = None
+                notes = ctrl.repository.get_all_notes()
+                if notes and notes[0].id is not None:
+                    ctrl.load_note(notes[0].id)
+                else:
+                    ctrl._load_or_create_default_note()
+            else:
+                ctrl.current_note = None
+                ctrl.close_window()
+
+        self.note_deleted.emit(note_id)
         self._notify_all_controllers()
-        if self.tray_manager:
-            notes = self.repository.get_all_notes()
-            self.tray_manager.update_tray_menu(notes, None)
 
     def delete_current_note(self) -> None:
-        """Deletes current note after user confirmation and closes window."""
+        """Deletes current note after user confirmation and loads next note or closes window."""
         if not self.current_note or self.current_note.id is None:
             return
 

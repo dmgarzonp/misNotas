@@ -5,7 +5,7 @@ all notes list, search filter, and hashtag pills.
 """
 
 from typing import List, Optional
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QFrame,
@@ -14,19 +14,38 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from src.models.note_model import Note
-from src.views.styles import get_theme
+from src.views.styles import get_gnome_icon, get_theme
+
+
+class NoteListWidget(QListWidget):
+    """Subclassed QListWidget emitting delete_requested on Delete/Backspace key press."""
+
+    delete_requested = pyqtSignal(int)
+
+    def keyPressEvent(self, event) -> None:
+        if event and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            item = self.currentItem()
+            if item:
+                note_id = item.data(Qt.ItemDataRole.UserRole)
+                if note_id is not None:
+                    self.delete_requested.emit(int(note_id))
+                    return
+        super().keyPressEvent(event)
 
 
 class SidebarWidget(QWidget):
     """macOS-styled collapsible sidebar panel."""
 
     note_selected = pyqtSignal(int)
+    delete_note_requested = pyqtSignal(int)
     tag_selected = pyqtSignal(str)
     search_changed = pyqtSignal(str)
 
@@ -66,7 +85,7 @@ class SidebarWidget(QWidget):
         )
         layout.addWidget(self.pinned_label)
 
-        self.notes_list = QListWidget(self)
+        self.notes_list = NoteListWidget(self)
         self.notes_list.setStyleSheet(
             "QListWidget { background: transparent; border: none; font-size: 13px; }"
             "QListWidget::item { padding: 6px 8px; border-radius: 6px; margin-bottom: 2px; }"
@@ -74,6 +93,11 @@ class SidebarWidget(QWidget):
             "QListWidget::item:selected { background-color: rgba(0, 0, 0, 0.1); font-weight: 600; }"
         )
         self.notes_list.itemClicked.connect(self._on_item_clicked)
+        self.notes_list.delete_requested.connect(self._confirm_and_emit_delete)
+        self.notes_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.notes_list.customContextMenuRequested.connect(
+            self._show_notes_context_menu
+        )
         layout.addWidget(self.notes_list, 1)
 
         # Tags Section
@@ -92,6 +116,36 @@ class SidebarWidget(QWidget):
         )
         self.tags_list.itemClicked.connect(self._on_tag_clicked)
         layout.addWidget(self.tags_list)
+
+    def _show_notes_context_menu(self, pos: QPoint) -> None:
+        """Shows right-click context menu on sidebar notes list items."""
+        item = self.notes_list.itemAt(pos)
+        if not item:
+            return
+        note_id = item.data(Qt.ItemDataRole.UserRole)
+        if note_id is None:
+            return
+
+        menu = QMenu(self)
+        delete_icon = get_gnome_icon("user-trash-symbolic")
+        action = menu.addAction(delete_icon, "Eliminar Nota")
+        if action:
+            action.triggered.connect(
+                lambda: self._confirm_and_emit_delete(int(note_id))
+            )
+        menu.exec(self.notes_list.mapToGlobal(pos))
+
+    def _confirm_and_emit_delete(self, note_id: int) -> None:
+        """Prompts user confirmation and emits delete_note_requested signal."""
+        reply = QMessageBox.question(
+            self,
+            "Eliminar Nota",
+            "¿Estás seguro de que deseas eliminar esta nota permanentemente?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.delete_note_requested.emit(note_id)
 
     def populate_notes(
         self, notes: List[Note], current_note_id: Optional[int] = None

@@ -6,8 +6,9 @@ font family selector, image insertion via QFileDialog, and PDF export.
 """
 
 import os
+import tempfile
 from typing import Dict, Optional
-from PyQt6.QtCore import QEvent, QPoint, QRectF, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QMimeData, QPoint, QRectF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QCursor,
@@ -16,6 +17,7 @@ from PyQt6.QtGui import (
     QDropEvent,
     QFont,
     QIcon,
+    QImage,
     QMouseEvent,
     QPainter,
     QPainterPath,
@@ -28,6 +30,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -39,6 +42,7 @@ from PyQt6.QtWidgets import (
     QWidgetAction,
 )
 
+from src.services.link_preview_service import LinkPreviewService
 from src.views.sidebar import SidebarWidget
 from src.views.styles import (
     PASTEL_THEMES,
@@ -134,6 +138,53 @@ class TexturedTextEdit(QTextEdit):
                 return
             super().dragMoveEvent(event)
 
+    def insertFromMimeData(self, source: Optional[QMimeData]) -> None:
+        """Handles pasting images directly from system clipboard (e.g. Ctrl+V / screenshots)."""
+        if not source:
+            return
+
+        if source.hasImage():
+            image_data = source.imageData()
+            if image_data is not None:
+                image = (
+                    image_data if isinstance(image_data, QImage) else QImage(image_data)
+                )
+                if not image.isNull():
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".png", delete=False
+                    ) as tmp:
+                        tmp_path = tmp.name
+                    if image.save(tmp_path, "PNG"):
+                        self.file_dropped.emit(tmp_path)
+                        return
+
+        if source.hasUrls():
+            for url in source.urls():
+                local_path = url.toLocalFile()
+                if local_path and os.path.exists(local_path):
+                    ext = os.path.splitext(local_path)[1].lower()
+                    if ext in (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"):
+                        self.file_dropped.emit(local_path)
+                        return
+
+        if source.hasText():
+            text = source.text().strip()
+            if LinkPreviewService.is_youtube_url(text):
+                card_html = LinkPreviewService.generate_youtube_card_html(text)
+                if card_html:
+                    cursor = self.textCursor()
+                    cursor.insertHtml(card_html)
+                    return
+            elif text.startswith(("http://", "https://")) and not (
+                " " in text or "\n" in text
+            ):
+                card_html = LinkPreviewService.generate_web_card_html(text)
+                cursor = self.textCursor()
+                cursor.insertHtml(card_html)
+                return
+
+        super().insertFromMimeData(source)
+
     def dropEvent(self, event: Optional[QDropEvent]) -> None:
         """Handles drop event for image files or text and renders image in text document."""
         if not event:
@@ -198,6 +249,7 @@ class NoteWindow(QWidget):
     close_requested = pyqtSignal()
     image_requested = pyqtSignal()
     export_pdf_requested = pyqtSignal()
+    window_resized = pyqtSignal(int, int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -335,8 +387,8 @@ class NoteWindow(QWidget):
                 f"background-color: {theme_obj.swatch_color}; border-radius: 11px; border: 2px solid {border_col};"
             )
             btn.clicked.connect(
-                lambda checked, name=theme_key, m=parent_menu: self._on_swatch_in_menu_clicked(
-                    name, m
+                lambda checked, name=theme_key, m=parent_menu: (
+                    self._on_swatch_in_menu_clicked(name, m)
                 )
             )
             layout.addWidget(btn)
@@ -396,6 +448,12 @@ class NoteWindow(QWidget):
                 "Roboto (Ubuntu)", lambda: self._apply_font_family("Roboto")
             )
             font_menu.addAction(
+                "✍️ Manuscrita (Caveat)",
+                lambda: self._apply_font_family(
+                    "Caveat, Dancing Script, Segoe Script, Comic Sans MS, cursive"
+                ),
+            )
+            font_menu.addAction(
                 "Fira Code (Código)", lambda: self._apply_font_family("Fira Code")
             )
             font_menu.addAction(
@@ -405,7 +463,13 @@ class NoteWindow(QWidget):
         menu.addSeparator()
         # 5. Rich Elements & Media
         img_icon = get_gnome_icon("image-x-generic-symbolic")
+        video_icon = get_gnome_icon("video-x-generic-symbolic")
         menu.addAction(img_icon, "Insertar Imagen...", self.image_requested.emit)
+        menu.addAction(
+            video_icon,
+            "🎬 Insertar Tarjeta Video / Enlace...",
+            self.insert_link_preview_dialog,
+        )
         menu.addAction("☑ Insertar Checklist", self.insert_checklist)
         menu.addAction("📊 Insertar Tabla 2x2", self.insert_table)
 
@@ -454,12 +518,33 @@ class NoteWindow(QWidget):
         """Inserts an image HTML element into the content editor."""
         cursor = self.content_edit.textCursor()
         img_html = (
-            f'<br><img src="{file_url}" width="260" ' 'style="border-radius: 8px;"><br>'
+            f'<br><img src="{file_url}" width="260" style="border-radius: 8px;"><br>'
         )
         cursor.insertHtml(img_html)
         vp = self.content_edit.viewport()
         if vp:
             vp.update()
+
+    def insert_link_preview_dialog(self) -> None:
+        """Prompts for a URL and inserts a YouTube video card or web preview link."""
+        url, ok = QInputDialog.getText(
+            self,
+            "Insertar Enlace / Video YouTube",
+            "Ingresa la URL del video de YouTube o sitio web:",
+        )
+        if ok and url.strip():
+            clean_url = url.strip()
+            if LinkPreviewService.is_youtube_url(clean_url):
+                card_html = LinkPreviewService.generate_youtube_card_html(clean_url)
+            else:
+                card_html = LinkPreviewService.generate_web_card_html(clean_url)
+
+            if card_html:
+                cursor = self.content_edit.textCursor()
+                cursor.insertHtml(card_html)
+                vp = self.content_edit.viewport()
+                if vp:
+                    vp.update()
 
     def _on_theme_selected(self, theme_name: str) -> None:
         """Handles theme selection from context menu."""
@@ -551,6 +636,12 @@ class NoteWindow(QWidget):
         """Resets drag position on mouse release."""
         self.drag_position = QPoint()
 
+    def resizeEvent(self, event) -> None:
+        """Emits window_resized signal when user resizes the window."""
+        super().resizeEvent(event)
+        size = self.size()
+        self.window_resized.emit(size.width(), size.height())
+
     # Public View API
     def set_note_data(
         self,
@@ -561,6 +652,8 @@ class NoteWindow(QWidget):
         pinned: bool = False,
         is_locked: bool = False,
         background_style: str = "blank",
+        width: int = 300,
+        height: int = 280,
     ) -> None:
         """Populates UI controls with note model data without emitting signals."""
         self.title_input.blockSignals(True)
@@ -577,6 +670,9 @@ class NoteWindow(QWidget):
 
         self.title_input.blockSignals(False)
         self.content_edit.blockSignals(False)
+
+        if width >= 200 and height >= 150:
+            self.resize(width, height)
 
         self.set_background_texture(background_style)
         self._apply_theme(theme_name)

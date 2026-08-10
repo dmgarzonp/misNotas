@@ -1,9 +1,4 @@
-"""Global Quick Note and System Tray service for Mis Apuntes application.
-
-Provides system tray integration using DropletMenu with top drop tail arrow,
-direct note deletion, full note listing, and hashtag filtering.
-"""
-
+import logging
 from typing import List, Optional
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
@@ -12,6 +7,8 @@ from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from src.models.note_model import Note
 from src.views.note_window import DropletMenu
 from src.views.styles import get_gnome_icon
+
+logger = logging.getLogger("mis_apuntes.tray")
 
 
 class QuickNoteManager(QObject):
@@ -26,7 +23,8 @@ class QuickNoteManager(QObject):
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self.tray_icon: Optional[QSystemTrayIcon] = None
-        self.current_menu: Optional[DropletMenu] = None
+        self.menu: DropletMenu = DropletMenu()
+        self.current_menu: DropletMenu = self.menu
         self._init_tray()
 
     def _create_default_pixmap(self) -> QPixmap:
@@ -44,6 +42,9 @@ class QuickNoteManager(QObject):
     def _init_tray(self) -> None:
         """Initializes system tray icon using native GNOME symbolic icon."""
         if not QSystemTrayIcon.isSystemTrayAvailable():
+            logger.warning(
+                "System Tray no está disponible en este entorno de escritorio."
+            )
             return
 
         icon = QIcon.fromTheme(
@@ -51,45 +52,57 @@ class QuickNoteManager(QObject):
         )
         self.tray_icon = QSystemTrayIcon(icon, self)
         self.tray_icon.setToolTip("Mis Apuntes - Notas Rápidas")
+        self.tray_icon.setContextMenu(self.menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+        logger.info("Icono del System Tray iniciado exitosamente.")
 
     def update_tray_menu(
         self, notes: List[Note], current_note_id: Optional[int] = None
     ) -> None:
         """Rebuilds DropletMenu for system tray with native GNOME icons and direct delete actions."""
-        if not self.tray_icon:
+        if not self.menu:
             return
 
-        tray_menu = DropletMenu()
+        # Re-use persistent QMenu instance to preserve DBus AppIndicator proxy connection
+        self.menu.clear()
+        logger.info("Actualizando menú del System Tray con %d notas...", len(notes))
 
-        # Action: New Quick Note (Ctrl+A)
+        # GNOME Symbolic Icons
         new_icon = get_gnome_icon("document-new-symbolic")
-        new_action = QAction(new_icon, "Nueva Nota Rápida (Ctrl+A)", self)
-        new_action.triggered.connect(self.quick_note_requested.emit)
-        tray_menu.addAction(new_action)
+        pinned_icon = get_gnome_icon("pin-symbolic")
+        notes_icon = get_gnome_icon("text-x-generic-symbolic")
+        open_icon = get_gnome_icon("document-open-symbolic")
+        delete_icon = get_gnome_icon("user-trash-symbolic")
+        tag_icon = get_gnome_icon("tag-symbolic")
+        quit_icon = get_gnome_icon("application-exit-symbolic")
 
-        tray_menu.addSeparator()
+        # Action 1: New Quick Note (Ctrl+A)
+        new_action = self.menu.addAction(new_icon, "Nueva Nota Rápida (Ctrl+A)")
+        if new_action:
+            new_action.triggered.connect(
+                lambda checked=False: self.quick_note_requested.emit()
+            )
 
-        # Pinned Notes Submenu / Section
+        self.menu.addSeparator()
+
+        # Pinned Notes Section
         pinned_notes = [n for n in notes if n.pinned and n.id is not None]
         if pinned_notes:
-            pinned_icon = get_gnome_icon("pin-symbolic")
-            pinned_menu = tray_menu.addMenu(pinned_icon, "Notas Fijadas")
+            pinned_menu = self.menu.addMenu(pinned_icon, "Notas Fijadas")
             if pinned_menu:
                 for note in pinned_notes:
                     note_id = note.id
-                    act = QAction(pinned_icon, note.display_title, self)
-                    if note_id:
+                    act = pinned_menu.addAction(pinned_icon, note.display_title)
+                    if act and note_id:
                         act.triggered.connect(
-                            lambda checked, nid=note_id: self.note_selected.emit(nid)
+                            lambda checked=False, nid=note_id: self.note_selected.emit(
+                                nid
+                            )
                         )
-                    pinned_menu.addAction(act)
 
-        # All Notes Submenu with Sub-Actions (Open & Delete)
-        notes_icon = get_gnome_icon("text-x-generic-symbolic")
-        delete_icon = get_gnome_icon("user-trash-symbolic")
-        all_menu = tray_menu.addMenu(notes_icon, "Todas las Notas")
+        # All Notes Section
+        all_menu = self.menu.addMenu(notes_icon, f"Todas las Notas ({len(notes)})")
         if all_menu:
             for note in notes:
                 if note.id is None:
@@ -98,58 +111,53 @@ class QuickNoteManager(QObject):
                 item_icon = (
                     get_gnome_icon("system-lock-screen-symbolic")
                     if note.is_locked
-                    else (get_gnome_icon("pin-symbolic") if note.pinned else notes_icon)
+                    else (pinned_icon if note.pinned else notes_icon)
                 )
-                active_str = " (Activa)" if note_id == current_note_id else ""
 
-                # Note Submenu with Open & Delete actions
-                sub_note_menu = all_menu.addMenu(
-                    item_icon, f"{note.display_title}{active_str}"
-                )
+                # Submenu for each note with Open & Delete actions
+                sub_note_menu = all_menu.addMenu(item_icon, note.display_title)
                 if sub_note_menu:
-                    open_act = QAction(item_icon, "Abrir Nota", self)
-                    open_act.triggered.connect(
-                        lambda checked, nid=note_id: self.note_selected.emit(nid)
-                    )
-                    sub_note_menu.addAction(open_act)
-
-                    del_act = QAction(delete_icon, "Eliminar Nota", self)
-                    del_act.triggered.connect(
-                        lambda checked, nid=note_id: self.note_delete_requested.emit(
-                            nid
+                    open_act = sub_note_menu.addAction(open_icon, "Abrir Nota")
+                    if open_act:
+                        open_act.triggered.connect(
+                            lambda checked=False, nid=note_id: self.note_selected.emit(
+                                nid
+                            )
                         )
-                    )
-                    sub_note_menu.addAction(del_act)
 
-        # Tags Submenu
+                    del_act = sub_note_menu.addAction(delete_icon, "Eliminar Nota")
+                    if del_act:
+                        del_act.triggered.connect(
+                            lambda checked=False, nid=note_id: (
+                                self.note_delete_requested.emit(nid)
+                            )
+                        )
+
+        # Tags Section
         all_tags = sorted(list({t for n in notes for t in n.extract_hashtags()}))
         if all_tags:
-            tag_icon = get_gnome_icon("tag-symbolic")
-            tags_menu = tray_menu.addMenu(tag_icon, "Etiquetas (#hashtags)")
+            tags_menu = self.menu.addMenu(tag_icon, "Etiquetas (#hashtags)")
             if tags_menu:
-                clear_act = QAction("Mostrar Todas", self)
-                clear_act.triggered.connect(lambda: self.tag_selected.emit(""))
-                tags_menu.addAction(clear_act)
+                clear_act = tags_menu.addAction(notes_icon, "Mostrar Todas")
+                if clear_act:
+                    clear_act.triggered.connect(
+                        lambda checked=False: self.tag_selected.emit("")
+                    )
                 tags_menu.addSeparator()
                 for tag in all_tags:
-                    act = QAction(tag_icon, f"#{tag}", self)
-                    act.triggered.connect(
-                        lambda checked, t=tag: self.tag_selected.emit(t)
-                    )
-                    tags_menu.addAction(act)
+                    act = tags_menu.addAction(tag_icon, f"#{tag}")
+                    if act:
+                        act.triggered.connect(
+                            lambda checked=False, t=tag: self.tag_selected.emit(t)
+                        )
 
-        tray_menu.addSeparator()
+        self.menu.addSeparator()
 
         # Exit Action
-        quit_icon = get_gnome_icon("application-exit-symbolic")
-        quit_action = QAction(quit_icon, "Salir", self)
+        quit_action = self.menu.addAction(quit_icon, "Salir")
         app = QApplication.instance()
-        if app:
+        if quit_action and app:
             quit_action.triggered.connect(app.quit)
-        tray_menu.addAction(quit_action)
-
-        self.current_menu = tray_menu
-        self.tray_icon.setContextMenu(tray_menu)
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """Pops up DropletMenu at cursor position when tray icon is clicked."""
@@ -157,5 +165,5 @@ class QuickNoteManager(QObject):
             QSystemTrayIcon.ActivationReason.Trigger,
             QSystemTrayIcon.ActivationReason.DoubleClick,
         ):
-            if self.current_menu:
-                self.current_menu.exec(QCursor.pos())
+            if self.menu:
+                self.menu.exec(QCursor.pos())
