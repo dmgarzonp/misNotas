@@ -1,10 +1,20 @@
 import logging
 from typing import List, Optional
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QCursor,
+    QDesktopServices,
+    QIcon,
+    QPainter,
+    QPixmap,
+)
+from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from src.models.note_model import Note
+from src.services.autostart_service import AutostartService
+from src.services.update_service import UpdateService
 from src.views.note_window import DropletMenu
 from src.views.styles import get_gnome_icon
 
@@ -153,11 +163,70 @@ class QuickNoteManager(QObject):
 
         self.menu.addSeparator()
 
+        # System Options: Autostart & Updates
+        autostart_icon = get_gnome_icon("emblem-system-symbolic")
+        update_icon = get_gnome_icon("software-update-available-symbolic")
+
+        autostart_service = AutostartService()
+        autostart_action = self.menu.addAction(
+            autostart_icon, "⚙️ Iniciar con Ubuntu (Autostart)"
+        )
+        if autostart_action:
+            autostart_action.setCheckable(True)
+            autostart_action.setChecked(autostart_service.is_autostart_enabled())
+            autostart_action.triggered.connect(self._toggle_autostart)
+
+        update_action = self.menu.addAction(update_icon, "🔄 Buscar Actualizaciones...")
+        if update_action:
+            update_action.triggered.connect(self._on_check_updates)
+
+        self.menu.addSeparator()
+
         # Exit Action
         quit_action = self.menu.addAction(quit_icon, "Salir")
         app = QApplication.instance()
         if quit_action and app:
             quit_action.triggered.connect(app.quit)
+
+    def _toggle_autostart(self, checked: bool) -> None:
+        """Toggles system autostart entry."""
+        autostart_service = AutostartService()
+        if checked:
+            autostart_service.enable_autostart()
+        else:
+            autostart_service.disable_autostart()
+
+    def _on_check_updates(self) -> None:
+        """Triggers asynchronous update check worker."""
+        self._update_service = UpdateService()
+        self._update_service.check_for_updates(
+            on_found=self._on_update_found,
+            on_up_to_date=self._on_up_to_date,
+            on_error=self._on_update_error,
+        )
+
+    def _on_update_found(self, latest_version: str, html_url: str) -> None:
+        """Displays update dialog when a newer version is found."""
+        reply = QMessageBox.question(
+            None,
+            "Nueva Actualización Disponible",
+            f"¡Hay una nueva versión de Mis Apuntes disponible! (v{latest_version})\n\n¿Deseas abrir la página de descargas?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(html_url))
+
+    def _on_up_to_date(self) -> None:
+        """Notifies user that application is up to date."""
+        QMessageBox.information(
+            None,
+            "Mis Apuntes",
+            "Tu aplicación Mis Apuntes ya está actualizada a la última versión.",
+        )
+
+    def _on_update_error(self, err_msg: str) -> None:
+        """Handles update check errors gracefully."""
+        logger.warning("Error al comprobar actualizaciones: %s", err_msg)
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """Pops up DropletMenu at cursor position when tray icon is clicked."""
