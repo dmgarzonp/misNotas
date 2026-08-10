@@ -178,6 +178,26 @@ def get_window_qss(theme: PastelTheme) -> str:
         height: 0px;
     }}
 
+    QScrollBar:horizontal {{
+        background: transparent;
+        height: 8px;
+        margin: 2px 4px 2px 4px;
+    }}
+
+    QScrollBar::handle:horizontal {{
+        background-color: {theme.border};
+        min-width: 20px;
+        border-radius: 4px;
+    }}
+
+    QScrollBar::handle:horizontal:hover {{
+        background-color: {theme.accent};
+    }}
+
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+        width: 0px;
+    }}
+
     QSizeGrip {{
         width: 16px;
         height: 16px;

@@ -8,10 +8,11 @@ font family selector, image insertion via QFileDialog, and PDF export.
 import os
 import tempfile
 from typing import Dict, Optional
-from PyQt6.QtCore import QEvent, QMimeData, QPoint, QRectF, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QMimeData, QPoint, QRectF, QTimer, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QCursor,
+    QDesktopServices,
     QDragEnterEvent,
     QDragMoveEvent,
     QDropEvent,
@@ -119,6 +120,16 @@ class TexturedTextEdit(QTextEdit):
         vp = self.viewport()
         if vp:
             vp.update()
+
+    def mouseReleaseEvent(self, event: Optional[QMouseEvent]) -> None:
+        """Opens external URLs (such as YouTube videos or web links) in default browser when clicked."""
+        if event and event.button() == Qt.MouseButton.LeftButton:
+            anchor = self.anchorAt(event.pos())
+            if anchor and anchor.startswith(("http://", "https://")):
+                QDesktopServices.openUrl(QUrl(anchor))
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
 
     def dragEnterEvent(self, event: Optional[QDragEnterEvent]) -> None:
         """Accepts drag enter events containing URLs or image files."""
