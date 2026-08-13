@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.misapuntes.MisApuntes</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Mis Apuntes</name>
+  <summary>Aplicación de Notas Rápidas y Notas de Escritorio Persistentes para Ubuntu</summary>
+
+  <description>
+    <p>
+      Mis Apuntes es una aplicación premium de notas rápidas para Linux inspirada en la estética de macOS Sequoia y GNOME Shell.
+    </p>
+    <p>
+      Características principales:
+    </p>
+    <ul>
+      <li>Ventanas flotantes sin bordes de tamaño compacto estilo post-it.</li>
+      <li>Modo Math Notes con evaluación de operaciones matemáticas en tiempo real.</li>
+      <li>Persistencia SQLite en modo WAL con guardado automático.</li>
+      <li>Inicio automático con el sistema operativo y restauración de posiciones en el escritorio.</li>
+      <li>Protección de notas con contraseña mediante autenticación de usuario PolicyKit/PAM.</li>
+      <li>Exportación a documentos PDF estilizados e inserción de imágenes y tarjetas web/YouTube.</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">org.misapuntes.MisApuntes.desktop</launchable>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Notas Rápidas y menú personalizado DropletMenu</caption>
+      <image>https://raw.githubusercontent.com/dmgarzonp/misNotas/main/data/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+
+  <url type="homepage">https://github.com/dmgarzonp/misNotas</url>
+  <url type="bugtracker">https://github.com/dmgarzonp/misNotas/issues</url>
+  <url type="vcs-browser">https://github.com/dmgarzonp/misNotas</url>
+
+  <developer_name>Diego Garzón</developer_name>
+
+  <releases>
+    <release version="1.0.0" date="2026-08-10">
+      <description>
+        <p>Lanzamiento inicial de Mis Apuntes v1.0.0.</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+</component>

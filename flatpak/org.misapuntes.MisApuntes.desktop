@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Mis Apuntes
+Comment=Notas Rápidas y Notas de Escritorio Persistentes estilo macOS Sequoia
+Exec=mis-apuntes
+Icon=org.misapuntes.MisApuntes
+Terminal=false
+Categories=Utility;TextEditor;Office;
+StartupNotify=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=2

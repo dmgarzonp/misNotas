@@ -1,6 +1,6 @@
 import logging
 from typing import List, Optional
-from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QColor,
@@ -8,15 +8,22 @@ from PyQt6.QtGui import (
     QDesktopServices,
     QIcon,
     QPainter,
+    QPen,
     QPixmap,
 )
-from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
+from PyQt6.QtWidgets import (
+    QApplication,
+    QMenu,
+    QMessageBox,
+    QSystemTrayIcon,
+)
 
 from src.models.note_model import Note
 from src.services.autostart_service import AutostartService
 from src.services.update_service import UpdateService
 from src.views.note_window import DropletMenu
 from src.views.styles import get_gnome_icon
+from src.views.update_dialog import UpdateDialog
 
 logger = logging.getLogger("mis_apuntes.tray")
 
@@ -35,31 +42,85 @@ class QuickNoteManager(QObject):
         self.tray_icon: Optional[QSystemTrayIcon] = None
         self.menu: DropletMenu = DropletMenu()
         self.current_menu: DropletMenu = self.menu
+        self._update_dialog: Optional[UpdateDialog] = None
+        self._update_service: Optional[UpdateService] = None
+        self._retry_count: int = 0
         self._init_tray()
 
-    def _create_default_pixmap(self) -> QPixmap:
-        """Generates a clean macOS yellow note icon pixmap fallback."""
-        pixmap = QPixmap(24, 24)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QColor("#FBBF24"))
-        painter.setPen(QColor("#B45309"))
-        painter.drawRoundedRect(2, 2, 20, 20, 5, 5)
-        painter.end()
-        return pixmap
+    def _create_note_icon(self) -> QIcon:
+        """Generates a multi-resolution QIcon with fallbacks to system theme and SVG icon files."""
+        # 1. Try system icon theme 'mis-apuntes'
+        theme_icon = QIcon.fromTheme("mis-apuntes")
+        if not theme_icon.isNull() and len(theme_icon.availableSizes()) > 0:
+            return theme_icon
+
+        # 2. Check local SVG paths in data/mis-apuntes.svg
+        import os
+        import sys
+
+        base_dir = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        svg_candidates = [
+            os.path.join(base_dir, "data", "mis-apuntes.svg"),
+            "/usr/share/icons/hicolor/scalable/apps/mis-apuntes.svg",
+        ]
+        if hasattr(sys, "_MEIPASS"):
+            svg_candidates.insert(
+                0, os.path.join(sys._MEIPASS, "data", "mis-apuntes.svg")
+            )
+
+        for svg_path in svg_candidates:
+            if os.path.exists(svg_path):
+                svg_icon = QIcon(svg_path)
+                if not svg_icon.isNull() and len(svg_icon.availableSizes()) > 0:
+                    return svg_icon
+
+        # 3. Procedural QIcon fallback
+        icon = QIcon()
+        for size in (16, 22, 24, 32, 48, 64):
+            pixmap = QPixmap(size, size)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            # Yellow note background
+            painter.setBrush(QColor("#FBBF24"))
+            painter.setPen(QColor("#B45309"))
+            corner = max(2, int(size * 0.15))
+            painter.drawRoundedRect(
+                1, 1, size - 2, size - 2, float(corner), float(corner)
+            )
+
+            # Notebook lines
+            if size >= 16:
+                line_pen = QPen(QColor("#D97706"), max(1.0, size / 24.0))
+                painter.setPen(line_pen)
+                y1 = int(size * 0.35)
+                y2 = int(size * 0.55)
+                y3 = int(size * 0.75)
+                margin = int(size * 0.2)
+                painter.drawLine(margin, y1, size - margin, y1)
+                painter.drawLine(margin, y2, size - margin, y2)
+                painter.drawLine(margin, y3, int(size * 0.65), y3)
+
+            painter.end()
+            icon.addPixmap(pixmap)
+        return icon
 
     def _init_tray(self) -> None:
-        """Initializes system tray icon using native GNOME symbolic icon."""
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            logger.warning(
-                "System Tray no está disponible en este entorno de escritorio."
-            )
+        """Initializes system tray icon using custom multi-size QIcon for DBus SNI compatibility."""
+        if self.tray_icon is not None:
             return
 
-        icon = QIcon.fromTheme(
-            "accessories-text-editor-symbolic", QIcon(self._create_default_pixmap())
-        )
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            logger.warning(
+                "System Tray no disponible en este momento. Reintentando..."
+            )
+            self._schedule_tray_retry()
+            return
+
+        icon = self._create_note_icon()
         self.tray_icon = QSystemTrayIcon(icon, self)
         self.tray_icon.setToolTip("Mis Apuntes - Notas Rápidas")
         self.tray_icon.setContextMenu(self.menu)
@@ -67,10 +128,19 @@ class QuickNoteManager(QObject):
         self.tray_icon.show()
         logger.info("Icono del System Tray iniciado exitosamente.")
 
+    def _schedule_tray_retry(self) -> None:
+        """Schedules retry attempt if system tray is not immediately available at boot."""
+        if self._retry_count < 10 and self.tray_icon is None:
+            self._retry_count += 1
+            QTimer.singleShot(2000, self._init_tray)
+
     def update_tray_menu(
         self, notes: List[Note], current_note_id: Optional[int] = None
     ) -> None:
         """Rebuilds DropletMenu for system tray with native GNOME icons and direct delete actions."""
+        if self.tray_icon is None:
+            self._init_tray()
+
         if not self.menu:
             return
 
@@ -163,20 +233,25 @@ class QuickNoteManager(QObject):
 
         self.menu.addSeparator()
 
-        # System Options: Autostart & Updates
-        autostart_icon = get_gnome_icon("emblem-system-symbolic")
+        # System Options: Autostart (standard checkable QAction for DBus AppIndicator compatibility) & Updates
+        autostart_icon = get_gnome_icon("system-run-symbolic")
+        if autostart_icon.isNull():
+            autostart_icon = get_gnome_icon("emblem-system-symbolic")
+
         update_icon = get_gnome_icon("software-update-available-symbolic")
+        if update_icon.isNull():
+            update_icon = get_gnome_icon("system-software-update-symbolic")
 
         autostart_service = AutostartService()
         autostart_action = self.menu.addAction(
-            autostart_icon, "⚙️ Iniciar con Ubuntu (Autostart)"
+            autostart_icon, "Iniciar al arrancar el sistema"
         )
         if autostart_action:
             autostart_action.setCheckable(True)
             autostart_action.setChecked(autostart_service.is_autostart_enabled())
             autostart_action.triggered.connect(self._toggle_autostart)
 
-        update_action = self.menu.addAction(update_icon, "🔄 Buscar Actualizaciones...")
+        update_action = self.menu.addAction(update_icon, "Buscar actualizaciones...")
         if update_action:
             update_action.triggered.connect(self._on_check_updates)
 
@@ -197,7 +272,20 @@ class QuickNoteManager(QObject):
             autostart_service.disable_autostart()
 
     def _on_check_updates(self) -> None:
-        """Triggers asynchronous update check worker."""
+        """Displays UpdateDialog modal and launches background update check worker."""
+        if not self._update_dialog:
+            self._update_dialog = UpdateDialog()
+            self._update_dialog.retry_requested.connect(self._start_update_worker)
+
+        self._update_dialog.set_searching()
+        self._update_dialog.show()
+        self._update_dialog.raise_()
+        self._update_dialog.activateWindow()
+
+        self._start_update_worker()
+
+    def _start_update_worker(self) -> None:
+        """Executes background update worker thread."""
         self._update_service = UpdateService()
         self._update_service.check_for_updates(
             on_found=self._on_update_found,
@@ -206,27 +294,20 @@ class QuickNoteManager(QObject):
         )
 
     def _on_update_found(self, latest_version: str, html_url: str) -> None:
-        """Displays update dialog when a newer version is found."""
-        reply = QMessageBox.question(
-            None,
-            "Nueva Actualización Disponible",
-            f"¡Hay una nueva versión de Mis Apuntes disponible! (v{latest_version})\n\n¿Deseas abrir la página de descargas?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            QDesktopServices.openUrl(QUrl(html_url))
+        """Routes update found event to UpdateDialog UI."""
+        if self._update_dialog:
+            self._update_dialog.set_update_found(latest_version, html_url)
 
     def _on_up_to_date(self) -> None:
-        """Notifies user that application is up to date."""
-        QMessageBox.information(
-            None,
-            "Mis Apuntes",
-            "Tu aplicación Mis Apuntes ya está actualizada a la última versión.",
-        )
+        """Routes up to date event to UpdateDialog UI."""
+        if self._update_dialog:
+            self._update_dialog.set_up_to_date()
 
     def _on_update_error(self, err_msg: str) -> None:
-        """Handles update check errors gracefully."""
+        """Routes error event to UpdateDialog UI."""
         logger.warning("Error al comprobar actualizaciones: %s", err_msg)
+        if self._update_dialog:
+            self._update_dialog.set_error(err_msg)
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """Pops up DropletMenu at cursor position when tray icon is clicked."""

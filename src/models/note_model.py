@@ -33,6 +33,8 @@ class Note:
     background_style: str = "blank"  # "blank", "ruled", "grid"
     width: int = 300
     height: int = 280
+    pos_x: int = 100
+    pos_y: int = 100
     created_at: str = ""
     updated_at: str = ""
 
@@ -56,15 +58,16 @@ class Note:
         return {tag.lower() for tag in raw_tags}
 
 
+def get_app_data_dir() -> str:
+    """Resolves standard Linux AppData location for Mis Apuntes (~/.local/share/misNotas)."""
+    base_dir = os.path.expanduser("~/.local/share/misNotas")
+    os.makedirs(base_dir, exist_ok=True)
+    return base_dir
+
+
 def get_default_db_path() -> str:
     """Resolves standard Linux AppData location for mis_apuntes.db (~/.local/share/misNotas/mis_apuntes.db)."""
-    base_dir = QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.AppDataLocation
-    )
-    if not base_dir:
-        base_dir = os.path.expanduser("~/.local/share/misNotas")
-    os.makedirs(base_dir, exist_ok=True)
-    return os.path.join(base_dir, "mis_apuntes.db")
+    return os.path.join(get_app_data_dir(), "mis_apuntes.db")
 
 
 class NoteRepository(INoteRepository):
@@ -95,12 +98,14 @@ class NoteRepository(INoteRepository):
                     content TEXT NOT NULL DEFAULT '',
                     content_html TEXT NOT NULL DEFAULT '',
                     theme TEXT NOT NULL DEFAULT 'honey',
-                    pinned INTEGER NOT NULL DEFAULT 0,
+                    pinned INTEGER NOT NULL DEFAULT 1,
                     is_locked INTEGER NOT NULL DEFAULT 0,
                     tags TEXT NOT NULL DEFAULT '',
                     background_style TEXT NOT NULL DEFAULT 'blank',
                     width INTEGER NOT NULL DEFAULT 300,
                     height INTEGER NOT NULL DEFAULT 280,
+                    pos_x INTEGER NOT NULL DEFAULT 100,
+                    pos_y INTEGER NOT NULL DEFAULT 100,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -117,6 +122,8 @@ class NoteRepository(INoteRepository):
                 ("background_style", "TEXT NOT NULL DEFAULT 'blank'"),
                 ("width", "INTEGER NOT NULL DEFAULT 300"),
                 ("height", "INTEGER NOT NULL DEFAULT 280"),
+                ("pos_x", "INTEGER NOT NULL DEFAULT 100"),
+                ("pos_y", "INTEGER NOT NULL DEFAULT 100"),
             ]
             for col_name, col_type in migrations:
                 if col_name not in columns:
@@ -125,6 +132,15 @@ class NoteRepository(INoteRepository):
                     )
                     conn.execute(f"ALTER TABLE notes ADD COLUMN {col_name} {col_type};")
             conn.commit()
+
+            # User version migration to ensure existing notes default to pinned=1
+            version_row = conn.execute("PRAGMA user_version;").fetchone()
+            user_version = version_row[0] if version_row else 0
+            if user_version < 1:
+                logger.info("Migrando notas existentes para fijarlas al escritorio (pinned=1)...")
+                conn.execute("UPDATE notes SET pinned = 1 WHERE pinned = 0;")
+                conn.execute("PRAGMA user_version = 1;")
+                conn.commit()
 
     def _row_to_note(self, row: sqlite3.Row) -> Note:
         """Converts SQLite Row to Note dataclass instance."""
@@ -142,6 +158,8 @@ class NoteRepository(INoteRepository):
             ),
             width=row["width"] if "width" in row.keys() else 300,
             height=row["height"] if "height" in row.keys() else 280,
+            pos_x=row["pos_x"] if "pos_x" in row.keys() else 100,
+            pos_y=row["pos_y"] if "pos_y" in row.keys() else 100,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -173,6 +191,9 @@ class NoteRepository(INoteRepository):
         background_style: str = "blank",
         width: int = 300,
         height: int = 280,
+        pos_x: int = 100,
+        pos_y: int = 100,
+        pinned: bool = True,
     ) -> Note:
         """Creates and persists a new Note entity."""
         now = datetime.now().isoformat()
@@ -180,17 +201,20 @@ class NoteRepository(INoteRepository):
             cursor = conn.execute(
                 """
                 INSERT INTO notes (
-                    title, content, content_html, theme, pinned, is_locked, tags, background_style, width, height, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 0, 0, '', ?, ?, ?, ?, ?);
+                    title, content, content_html, theme, pinned, is_locked, tags, background_style, width, height, pos_x, pos_y, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 0, '', ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     title,
                     content,
                     content_html,
                     theme,
+                    1 if pinned else 0,
                     background_style,
                     width,
                     height,
+                    pos_x,
+                    pos_y,
                     now,
                     now,
                 ),
@@ -203,12 +227,14 @@ class NoteRepository(INoteRepository):
                 content=content,
                 content_html=content_html,
                 theme=theme,
-                pinned=False,
+                pinned=pinned,
                 is_locked=False,
                 tags="",
                 background_style=background_style,
                 width=width,
                 height=height,
+                pos_x=pos_x,
+                pos_y=pos_y,
                 created_at=now,
                 updated_at=now,
             )
@@ -223,11 +249,13 @@ class NoteRepository(INoteRepository):
                 conn.commit()
 
             logger.info(
-                "Creada nota ID=%d ('%s') [%dx%d]",
+                "Creada nota ID=%d ('%s') [%dx%d @ (%d,%d)]",
                 note_id,
                 note.display_title,
                 width,
                 height,
+                pos_x,
+                pos_y,
             )
             return note
 
@@ -243,6 +271,8 @@ class NoteRepository(INoteRepository):
         background_style: str = "blank",
         width: int = 300,
         height: int = 280,
+        pos_x: int = 100,
+        pos_y: int = 100,
     ) -> Optional[Note]:
         """Updates an existing Note entity with atomic transaction."""
         now = datetime.now().isoformat()
@@ -253,7 +283,7 @@ class NoteRepository(INoteRepository):
             cursor = conn.execute(
                 """
                 UPDATE notes
-                SET title = ?, content = ?, content_html = ?, theme = ?, pinned = ?, is_locked = ?, tags = ?, background_style = ?, width = ?, height = ?, updated_at = ?
+                SET title = ?, content = ?, content_html = ?, theme = ?, pinned = ?, is_locked = ?, tags = ?, background_style = ?, width = ?, height = ?, pos_x = ?, pos_y = ?, updated_at = ?
                 WHERE id = ?;
                 """,
                 (
@@ -267,6 +297,8 @@ class NoteRepository(INoteRepository):
                     background_style,
                     width,
                     height,
+                    pos_x,
+                    pos_y,
                     now,
                     note_id,
                 ),
@@ -274,11 +306,13 @@ class NoteRepository(INoteRepository):
             conn.commit()
             if cursor.rowcount > 0:
                 logger.info(
-                    "Actualizada nota ID=%d ('%s') [%dx%d]",
+                    "Actualizada nota ID=%d ('%s') [%dx%d @ (%d,%d)]",
                     note_id,
                     temp_note.display_title,
                     width,
                     height,
+                    pos_x,
+                    pos_y,
                 )
                 return self.get_note_by_id(note_id)
             return None
@@ -298,6 +332,8 @@ class NoteRepository(INoteRepository):
                 background_style=note.background_style,
                 width=note.width,
                 height=note.height,
+                pos_x=note.pos_x,
+                pos_y=note.pos_y,
             )
         return None
 
@@ -316,6 +352,8 @@ class NoteRepository(INoteRepository):
                 background_style=note.background_style,
                 width=note.width,
                 height=note.height,
+                pos_x=note.pos_x,
+                pos_y=note.pos_y,
             )
         return None
 
@@ -341,7 +379,7 @@ class NoteRepository(INoteRepository):
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT id, title, content, content_html, theme, pinned, is_locked, tags, background_style, width, height, created_at, updated_at
+                SELECT id, title, content, content_html, theme, pinned, is_locked, tags, background_style, width, height, pos_x, pos_y, created_at, updated_at
                 FROM notes
                 WHERE title LIKE ? OR content LIKE ?
                 ORDER BY pinned DESC, datetime(updated_at) DESC, id DESC;

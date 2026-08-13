@@ -22,6 +22,8 @@ class INoteRepository(ABC):
         background_style: str = "blank",
         width: int = 300,
         height: int = 280,
+        pos_x: int = 100,
+        pos_y: int = 100,
     ) -> "Note":
         """Creates a new note entity."""
         pass
@@ -49,6 +51,8 @@ class INoteRepository(ABC):
         background_style: str = "blank",
         width: int = 300,
         height: int = 280,
+        pos_x: int = 100,
+        pos_y: int = 100,
     ) -> Optional["Note"]:
         """Updates fields of an existing note."""
         pass

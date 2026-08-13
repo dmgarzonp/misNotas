@@ -119,8 +119,10 @@ def test_controller_pin_and_lock(qapp, temp_repo, qtbot):
     auth = AuthService(override_auth=True)
     controller = NoteController(view=window, repository=temp_repo, auth_service=auth)
 
-    controller.toggle_pin_current_note()
     assert controller.current_note.pinned is True
+
+    controller.toggle_pin_current_note()
+    assert controller.current_note.pinned is False
 
     controller.toggle_lock_current_note()
     assert controller.current_note.is_locked is True
@@ -325,3 +327,81 @@ def test_youtube_link_paste_and_click_handler(qapp, temp_repo, qtbot):
         Qt.KeyboardModifier.NoModifier,
     )
     window.content_edit.mouseReleaseEvent(evt)
+
+
+def test_update_dialog_states(qapp, qtbot):
+    from src.views.update_dialog import UpdateDialog
+
+    dialog = UpdateDialog(current_version="1.0.0")
+    qtbot.addWidget(dialog)
+
+    # State 1: Searching (Spinner active)
+    dialog.set_searching()
+    assert not dialog.progress_bar.isHidden()
+    assert dialog.retry_button.isHidden()
+    assert dialog.action_button.isHidden()
+    assert dialog.close_button.text() == "Cancelar"
+
+    # State 2: Update Found
+    dialog.set_update_found("1.1.0", "https://github.com/test/release")
+    assert dialog.progress_bar.isHidden()
+    assert not dialog.action_button.isHidden()
+    assert dialog.download_url == "https://github.com/test/release"
+    assert dialog.close_button.text() == "Más tarde"
+
+    # State 3: Up to Date
+    dialog.set_up_to_date()
+    assert dialog.progress_bar.isHidden()
+    assert dialog.action_button.isHidden()
+    assert dialog.close_button.text() == "Aceptar"
+
+    # State 4: Error & Retry
+    dialog.set_error("HTTP 500 Server Error")
+    assert dialog.progress_bar.isHidden()
+    assert not dialog.retry_button.isHidden()
+    assert dialog.close_button.text() == "Cerrar"
+
+    retry_emitted = False
+
+    def on_retry():
+        nonlocal retry_emitted
+        retry_emitted = True
+
+    dialog.retry_requested.connect(on_retry)
+    dialog._on_retry_clicked()
+    assert retry_emitted
+    assert not dialog.progress_bar.isHidden()
+
+
+def test_tray_menu_autostart_and_update_items(qapp, qtbot):
+    from src.services.global_shortcut import QuickNoteManager
+
+    tray_manager = QuickNoteManager(qapp)
+    tray_manager.update_tray_menu([])
+
+    actions = tray_manager.menu.actions()
+    action_texts = [a.text() for a in actions]
+
+    assert "Iniciar al arrancar el sistema" in action_texts
+    assert "Buscar actualizaciones..." in action_texts
+
+    autostart_act = next(
+        a for a in actions if a.text() == "Iniciar al arrancar el sistema"
+    )
+    update_act = next(a for a in actions if a.text() == "Buscar actualizaciones...")
+
+    assert autostart_act.isCheckable()
+    assert "⚙️" not in autostart_act.text()
+    assert "Autostart" not in autostart_act.text()
+    assert "🔄" not in update_act.text()
+
+
+def test_create_note_icon_pixmaps(qapp, qtbot):
+    from src.services.global_shortcut import QuickNoteManager
+
+    tray_manager = QuickNoteManager(qapp)
+    icon = tray_manager._create_note_icon()
+    assert not icon.isNull()
+    sizes = icon.availableSizes()
+    assert len(sizes) > 0
+    assert any(s.width() == 24 for s in sizes)

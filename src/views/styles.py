@@ -158,6 +158,29 @@ def get_window_qss(theme: PastelTheme) -> str:
         margin: 4px 8px;
     }}
 
+    #AutostartRow {{
+        border-radius: 6px;
+    }}
+    #AutostartRow:hover {{
+        background-color: {theme.button_hover};
+    }}
+    #AutostartText {{
+        color: {theme.text_color};
+        font-family: 'Inter', 'SF Pro Text', 'Roboto', sans-serif;
+        font-size: 13px;
+    }}
+    #AutostartSwitch::indicator {{
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 1.5px solid {theme.border};
+        background-color: transparent;
+    }}
+    #AutostartSwitch::indicator:checked {{
+        background-color: {theme.accent};
+        border-color: {theme.accent};
+    }}
+
     QScrollBar:vertical {{
         background: transparent;
         width: 8px;

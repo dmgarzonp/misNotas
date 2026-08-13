@@ -1,0 +1,49 @@
+app-id: org.misapuntes.MisApuntes
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: mis-apuntes
+
+finish-args:
+  # Display & GPU Access
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  # System Tray & DBus Services
+  - --socket=session-bus
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Filesystem Persistence for mis_apuntes.db
+  - --filesystem=xdg-data/misNotas:create
+  - --filesystem=xdg-config/autostart:create
+  - --filesystem=xdg-config/systemd:create
+
+build-options:
+  env:
+    PYTHONPATH: /app/lib/python3.11/site-packages
+
+modules:
+  - name: python3-pyqt6
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links=file://${PWD}/wheelhouse --prefix=${FLATPAK_DEST} PyQt6 PyQt6-Qt6 PyQt6-sip
+    sources:
+      - type: dir
+        path: .
+
+  - name: mis-apuntes
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/bin /app/share/applications /app/share/icons/hicolor/scalable/apps /app/share/metainfo
+      - cp -r src main.py /app/bin/
+      - cat << 'EOF' > /app/bin/mis-apuntes
+#!/bin/sh
+exec python3 /app/bin/main.py "$@"
+EOF
+      - chmod +x /app/bin/mis-apuntes
+      - cp data/mis-apuntes.svg /app/share/icons/hicolor/scalable/apps/org.misapuntes.MisApuntes.svg
+      - cp flatpak/org.misapuntes.MisApuntes.desktop /app/share/applications/org.misapuntes.MisApuntes.desktop
+      - cp flatpak/org.misapuntes.MisApuntes.appdata.xml /app/share/metainfo/org.misapuntes.MisApuntes.appdata.xml
+    sources:
+      - type: dir
+        path: ..

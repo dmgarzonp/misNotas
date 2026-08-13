@@ -8,7 +8,7 @@ from src.services.update_service import UpdateWorker
 
 def test_autostart_service_enable_and_disable():
     with tempfile.TemporaryDirectory() as tmp_dir:
-        service = AutostartService(autostart_dir=tmp_dir)
+        service = AutostartService(autostart_dir=tmp_dir, systemd_user_dir=tmp_dir)
         assert not service.is_autostart_enabled()
 
         success_enable = service.enable_autostart()

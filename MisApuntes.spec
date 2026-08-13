@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('skills', 'skills')],
+    datas=[('skills', 'skills'), ('data', 'data')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -14,6 +14,18 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# Exclude system C libraries that bind to local GLIBC versions to ensure cross-distro compatibility
+excluded_system_libs = {
+    'libglib-2.0.so.0',
+    'libgobject-2.0.so.0',
+    'libgio-2.0.so.0',
+    'libgmodule-2.0.so.0',
+    'libgthread-2.0.so.0',
+    'liblcms2.so.2',
+}
+a.binaries = [x for x in a.binaries if x[0] not in excluded_system_libs]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

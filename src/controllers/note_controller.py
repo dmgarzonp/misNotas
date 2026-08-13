@@ -162,6 +162,7 @@ class NoteController(QObject):
         self.view.theme_changed.connect(self._on_theme_changed)
         self.view.background_style_changed.connect(self._on_background_style_changed)
         self.view.window_resized.connect(self._on_window_resized)
+        self.view.window_moved.connect(self._on_window_moved)
         self.view.new_note_requested.connect(self.spawn_new_note_window)
         self.view.delete_note_requested.connect(self.delete_current_note)
         self.view.pin_requested.connect(self.toggle_pin_current_note)
@@ -315,6 +316,8 @@ class NoteController(QObject):
                 background_style=self.current_note.background_style,
                 width=self.current_note.width,
                 height=self.current_note.height,
+                pos_x=self.current_note.pos_x,
+                pos_y=self.current_note.pos_y,
             )
             self.view.set_status_text("Guardado")
 
@@ -324,6 +327,14 @@ class NoteController(QObject):
             if self.current_note.width != width or self.current_note.height != height:
                 self.current_note.width = width
                 self.current_note.height = height
+                self.save_timer.start()
+
+    def _on_window_moved(self, pos_x: int, pos_y: int) -> None:
+        """Handles window move/drag events, updates current_note desktop position, and triggers save timer."""
+        if self.current_note:
+            if self.current_note.pos_x != pos_x or self.current_note.pos_y != pos_y:
+                self.current_note.pos_x = pos_x
+                self.current_note.pos_y = pos_y
                 self.save_timer.start()
 
     def refresh_sidebar(self) -> None:
@@ -463,6 +474,8 @@ class NoteController(QObject):
 
         curr_w = self.view.width()
         curr_h = self.view.height()
+        curr_x = self.view.pos().x()
+        curr_y = self.view.pos().y()
 
         if self.current_note.id is None:
             created = self.repository.create_note(
@@ -473,6 +486,8 @@ class NoteController(QObject):
                 background_style=self.current_note.background_style,
                 width=curr_w,
                 height=curr_h,
+                pos_x=curr_x,
+                pos_y=curr_y,
             )
             self.current_note = created
             self.note_created.emit(created.id)
@@ -488,6 +503,8 @@ class NoteController(QObject):
                 background_style=self.current_note.background_style,
                 width=curr_w,
                 height=curr_h,
+                pos_x=curr_x,
+                pos_y=curr_y,
             )
             if updated:
                 self.current_note = updated
@@ -528,6 +545,7 @@ class NoteController(QObject):
             background_style=(
                 self.current_note.background_style if self.current_note else "blank"
             ),
+            pinned=True,
         )
 
         # Spawn new window & controller
@@ -553,8 +571,9 @@ class NoteController(QObject):
         return new_controller
 
     def close_window(self) -> None:
-        """Closes current window and unregisters controller."""
+        """Closes current window, saves pending changes, and unregisters controller."""
         self.save_timer.stop()
+        self._save_current_note()
         if self in NoteController._active_controllers:
             NoteController._active_controllers.remove(self)
         try:

@@ -261,6 +261,7 @@ class NoteWindow(QWidget):
     image_requested = pyqtSignal()
     export_pdf_requested = pyqtSignal()
     window_resized = pyqtSignal(int, int)
+    window_moved = pyqtSignal(int, int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -653,6 +654,12 @@ class NoteWindow(QWidget):
         size = self.size()
         self.window_resized.emit(size.width(), size.height())
 
+    def moveEvent(self, event) -> None:
+        """Emits window_moved signal when user moves or drags the window on the desktop."""
+        super().moveEvent(event)
+        pos = self.pos()
+        self.window_moved.emit(pos.x(), pos.y())
+
     # Public View API
     def set_note_data(
         self,
@@ -665,6 +672,8 @@ class NoteWindow(QWidget):
         background_style: str = "blank",
         width: int = 300,
         height: int = 280,
+        pos_x: int = 100,
+        pos_y: int = 100,
     ) -> None:
         """Populates UI controls with note model data without emitting signals."""
         self.title_input.blockSignals(True)
@@ -684,6 +693,9 @@ class NoteWindow(QWidget):
 
         if width >= 200 and height >= 150:
             self.resize(width, height)
+
+        if pos_x >= 0 and pos_y >= 0:
+            self.move(pos_x, pos_y)
 
         self.set_background_texture(background_style)
         self._apply_theme(theme_name)

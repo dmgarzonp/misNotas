@@ -41,11 +41,13 @@ def test_create_and_get_note(temp_repo):
     assert note.title == "Nota 1"
     assert note.content == "Contenido 1"
     assert note.theme == "lavender"
+    assert note.pinned is True
 
     fetched = temp_repo.get_note_by_id(note.id)
     assert fetched is not None
     assert fetched.id == note.id
     assert fetched.title == "Nota 1"
+    assert fetched.pinned is True
 
 
 def test_update_note(temp_repo):
@@ -103,6 +105,37 @@ def test_note_geometry_persistence(temp_repo):
     assert updated is not None
     assert updated.width == 520
     assert updated.height == 410
+
+
+def test_note_position_pos_x_pos_y_persistence(temp_repo):
+    note = temp_repo.create_note(
+        title="Nota Posición",
+        content="Prueba",
+        width=400,
+        height=300,
+        pos_x=250,
+        pos_y=180,
+    )
+    assert note.pos_x == 250
+    assert note.pos_y == 180
+
+    fetched = temp_repo.get_note_by_id(note.id)
+    assert fetched is not None
+    assert fetched.pos_x == 250
+    assert fetched.pos_y == 180
+
+    updated = temp_repo.update_note(
+        note_id=note.id,
+        title="Nota Posición",
+        content="Prueba Modificada",
+        width=400,
+        height=300,
+        pos_x=500,
+        pos_y=320,
+    )
+    assert updated is not None
+    assert updated.pos_x == 500
+    assert updated.pos_y == 320
 
 
 def test_inote_repository_interface_compliance(temp_repo):
