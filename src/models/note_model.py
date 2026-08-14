@@ -142,6 +142,10 @@ class NoteRepository(INoteRepository):
                 conn.execute("PRAGMA user_version = 1;")
                 conn.commit()
 
+            # Fix any legacy notes erroneously saved at (0, 0)
+            conn.execute("UPDATE notes SET pos_x = 100, pos_y = 100 WHERE pos_x <= 0 AND pos_y <= 0;")
+            conn.commit()
+
     def _row_to_note(self, row: sqlite3.Row) -> Note:
         """Converts SQLite Row to Note dataclass instance."""
         return Note(

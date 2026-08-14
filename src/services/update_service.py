@@ -2,6 +2,8 @@
 
 import json
 import logging
+import ssl
+import urllib.error
 import urllib.request
 from typing import Optional
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -28,9 +30,14 @@ class UpdateWorker(QThread):
         try:
             req = urllib.request.Request(
                 GITHUB_RELEASES_URL,
-                headers={"User-Agent": "MisApuntes-UpdateChecker/1.0"},
+                headers={
+                    "User-Agent": "MisApuntes-UpdateChecker/1.0",
+                    "Accept": "application/vnd.github.v3+json",
+                },
             )
-            with urllib.request.urlopen(req, timeout=10) as response:
+            context = ssl.create_default_context()
+
+            with urllib.request.urlopen(req, timeout=10, context=context) as response:
                 if response.status == 200:
                     data = json.loads(response.read().decode("utf-8"))
                     tag_name = data.get("tag_name", "").lstrip("v").strip()
@@ -45,9 +52,25 @@ class UpdateWorker(QThread):
                     else:
                         self.up_to_date.emit()
                 else:
-                    self.error_occurred.emit(f"HTTP Status {response.status}")
+                    self.error_occurred.emit(f"Respuesta HTTP {response.status}")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                # 404 on /releases/latest means no releases published yet on GitHub repo
+                logger.info(
+                    "El repositorio de GitHub existe pero aún no tiene Releases publicadas (%s). Aplicación al día.",
+                    e,
+                )
+                self.up_to_date.emit()
+            else:
+                logger.warning("Error HTTP al verificar actualizaciones: %s", e)
+                self.error_occurred.emit(f"Error HTTP {e.code}")
+        except urllib.error.URLError as e:
+            logger.warning("No se pudo conectar con GitHub: %s", e)
+            self.error_occurred.emit(
+                "No se pudo conectar con el servidor de actualizaciones.\nVerifica tu conexión a internet."
+            )
         except Exception as e:
-            logger.warning("No se pudo verificar actualizaciones: %s", e)
+            logger.warning("Error inesperado comprobando actualizaciones: %s", e)
             self.error_occurred.emit(str(e))
 
     @staticmethod

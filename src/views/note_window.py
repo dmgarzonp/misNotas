@@ -269,6 +269,7 @@ class NoteWindow(QWidget):
         self.current_theme_name: str = "honey"
         self.is_pinned: bool = False
         self.is_locked: bool = False
+        self._is_initialized: bool = False
 
         # Auto-hide status timer
         self.status_hide_timer = QTimer(self)
@@ -657,8 +658,10 @@ class NoteWindow(QWidget):
     def moveEvent(self, event) -> None:
         """Emits window_moved signal when user moves or drags the window on the desktop."""
         super().moveEvent(event)
-        pos = self.pos()
-        self.window_moved.emit(pos.x(), pos.y())
+        if getattr(self, "_is_initialized", False) and self.isVisible():
+            pos = self.pos()
+            if pos.x() >= 0 and pos.y() >= 0:
+                self.window_moved.emit(pos.x(), pos.y())
 
     # Public View API
     def set_note_data(
@@ -676,6 +679,7 @@ class NoteWindow(QWidget):
         pos_y: int = 100,
     ) -> None:
         """Populates UI controls with note model data without emitting signals."""
+        self.blockSignals(True)
         self.title_input.blockSignals(True)
         self.content_edit.blockSignals(True)
 
@@ -688,9 +692,6 @@ class NoteWindow(QWidget):
         self.is_pinned = pinned
         self.is_locked = is_locked
 
-        self.title_input.blockSignals(False)
-        self.content_edit.blockSignals(False)
-
         if width >= 200 and height >= 150:
             self.resize(width, height)
 
@@ -699,6 +700,12 @@ class NoteWindow(QWidget):
 
         self.set_background_texture(background_style)
         self._apply_theme(theme_name)
+
+        self.title_input.blockSignals(False)
+        self.content_edit.blockSignals(False)
+        self.blockSignals(False)
+
+        self._is_initialized = True
 
     def set_status_text(self, text: str) -> None:
         """Displays status badge while editing and schedules auto-hiding when saved."""

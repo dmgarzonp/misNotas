@@ -331,11 +331,16 @@ class NoteController(QObject):
 
     def _on_window_moved(self, pos_x: int, pos_y: int) -> None:
         """Handles window move/drag events, updates current_note desktop position, and triggers save timer."""
-        if self.current_note:
-            if self.current_note.pos_x != pos_x or self.current_note.pos_y != pos_y:
-                self.current_note.pos_x = pos_x
-                self.current_note.pos_y = pos_y
-                self.save_timer.start()
+        if (
+            self.current_note
+            and getattr(self.view, "_is_initialized", False)
+            and self.view.isVisible()
+        ):
+            if pos_x >= 0 and pos_y >= 0:
+                if self.current_note.pos_x != pos_x or self.current_note.pos_y != pos_y:
+                    self.current_note.pos_x = pos_x
+                    self.current_note.pos_y = pos_y
+                    self.save_timer.start()
 
     def refresh_sidebar(self) -> None:
         """Refreshes sidebar note items, hashtag tags, and system tray menu across all active windows."""
@@ -477,6 +482,11 @@ class NoteController(QObject):
         curr_x = self.view.pos().x()
         curr_y = self.view.pos().y()
 
+        # Prevent overwriting valid coordinates with (0,0) during startup mapping
+        if curr_x <= 0 and curr_y <= 0 and self.current_note.pos_x > 0:
+            curr_x = self.current_note.pos_x
+            curr_y = self.current_note.pos_y
+
         if self.current_note.id is None:
             created = self.repository.create_note(
                 title=self.current_note.title,
@@ -532,11 +542,23 @@ class NoteController(QObject):
             tray.update_tray_menu(notes, curr_id)
 
     def spawn_new_note_window(self) -> "NoteController":
-        """Spawns a NEW separate floating NoteWindow next to or below active note window."""
+        """Spawns a NEW separate floating NoteWindow side-by-side to active note window."""
         self.save_timer.stop()
         self._save_current_note()
 
-        # Create new note entity in database
+        # Calculate position offset side-by-side
+        curr_pos = self.view.pos()
+        curr_x = curr_pos.x() if curr_pos.x() > 0 else 100
+        curr_y = curr_pos.y() if curr_pos.y() > 0 else 100
+
+        new_x = curr_x + 320
+        new_y = curr_y
+
+        if new_x > 1200:
+            new_x = 100
+            new_y = curr_y + 300
+
+        # Create new note entity in database with explicit side-by-side coordinates
         new_note = self.repository.create_note(
             title="",
             content="",
@@ -545,6 +567,10 @@ class NoteController(QObject):
             background_style=(
                 self.current_note.background_style if self.current_note else "blank"
             ),
+            width=300,
+            height=280,
+            pos_x=new_x,
+            pos_y=new_y,
             pinned=True,
         )
 
@@ -558,10 +584,6 @@ class NoteController(QObject):
             image_manager=self.image_manager,
             note_id=new_note.id,
         )
-
-        # Position offset relative to active window
-        curr_pos = self.view.pos()
-        new_view.move(curr_pos.x() + 35, curr_pos.y() + 35)
 
         new_view.show()
         new_view.raise_()
