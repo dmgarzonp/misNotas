@@ -3,7 +3,7 @@
 # Exit on error
 set -e
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 APP_NAME="mis-apuntes"
 DEB_DIR="build/deb/${APP_NAME}_${VERSION}_amd64"
 

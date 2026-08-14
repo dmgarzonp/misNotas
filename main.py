@@ -57,7 +57,7 @@ sys.excepthook = handle_uncaught_exception
 def main() -> None:
     """Bootstraps and launches Mis Apuntes application."""
     logger.info("==================================================")
-    logger.info("Iniciando aplicación Mis Apuntes v1.0.0...")
+    logger.info("Iniciando aplicación Mis Apuntes v1.0.1...")
     logger.info("Log de diagnóstico guardado en: %s", log_file_path)
     logger.info("Python: %s", sys.version)
     logger.info("Qt version: %s", QT_VERSION_STR)

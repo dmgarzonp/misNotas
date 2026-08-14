@@ -1,14 +1,11 @@
-"""Update Dialog Component for Mis Apuntes application.
-
-Provides a modern macOS/GNOME styled modal dialog with an animated spinner
-to inform users about software update progress and results.
-"""
-
 import logging
+import os
+import sys
 from typing import Optional
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QProcess, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -18,14 +15,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.services.update_service import CURRENT_VERSION
+from src.services.update_service import (
+    CURRENT_VERSION,
+    UpdateDownloaderWorker,
+    UpdateInstallerWorker,
+)
 from src.views.styles import PASTEL_THEMES, get_gnome_icon
 
 logger = logging.getLogger("mis_apuntes.update_dialog")
 
 
 class UpdateDialog(QDialog):
-    """Modal dialog displaying update checking progress, results, or error messages."""
+    """Modal dialog displaying update checking progress, results, live download feedback, and auto-installation."""
 
     retry_requested = pyqtSignal()
 
@@ -35,9 +36,13 @@ class UpdateDialog(QDialog):
         super().__init__(parent)
         self.current_version = current_version
         self.download_url: Optional[str] = None
+        self.latest_version: str = current_version
+        self._downloader_worker: Optional[UpdateDownloaderWorker] = None
+        self._installer_worker: Optional[UpdateInstallerWorker] = None
+        self._is_install_complete: bool = False
 
         self.setWindowTitle("Actualizaciones de Software")
-        self.setFixedSize(380, 220)
+        self.setFixedSize(400, 240)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
 
         self._setup_ui()
@@ -81,10 +86,10 @@ class UpdateDialog(QDialog):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        # Animated Indeterminate Progress Bar (Spinner replacement)
+        # Progress Bar (Supports indeterminate pulse & percentage mode)
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setMinimum(0)
-        self.progress_bar.setMaximum(0)  # Pulse animation
+        self.progress_bar.setMaximum(0)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setFixedHeight(8)
         layout.addWidget(self.progress_bar)
@@ -180,23 +185,29 @@ class UpdateDialog(QDialog):
 
         self.title_label.setText("Buscando Actualizaciones")
         self.status_label.setText("Conectando con el servidor de actualizaciones...")
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(0)
         self.progress_bar.show()
         self.retry_button.hide()
         self.action_button.hide()
         self.close_button.setText("Cancelar")
 
-    def set_update_found(self, latest_version: str, html_url: str) -> None:
+    def set_update_found(self, latest_version: str, download_url: str) -> None:
         """Sets UI state when a new release is available."""
-        self.download_url = html_url
+        self.latest_version = latest_version
+        self.download_url = download_url
+        self._is_install_complete = False
+
         icon = get_gnome_icon("software-update-available-symbolic")
         self.icon_label.setPixmap(icon.pixmap(40, 40))
 
         self.title_label.setText("¡Nueva Actualización Disponible!")
         self.status_label.setText(
-            f"La versión <b>v{latest_version}</b> ya está disponible para descargar."
+            f"La versión <b>v{latest_version}</b> está lista para descargar e instalar."
         )
         self.progress_bar.hide()
         self.retry_button.hide()
+        self.action_button.setText("Descargar e Instalar")
         self.action_button.show()
         self.close_button.setText("Más tarde")
 
@@ -234,10 +245,102 @@ class UpdateDialog(QDialog):
         self.close_button.setText("Cerrar")
 
     def _on_action_clicked(self) -> None:
-        """Opens download page in default browser and accepts dialog."""
-        if self.download_url:
+        """Handles download & install action button click."""
+        if self._is_install_complete:
+            self._restart_app()
+            return
+
+        if not self.download_url:
+            return
+
+        if self.download_url.endswith(".deb") or "/download/" in self.download_url:
+            self._start_download()
+        else:
             QDesktopServices.openUrl(QUrl(self.download_url))
-        self.accept()
+            self.accept()
+
+    def _start_download(self) -> None:
+        """Launches in-app download worker thread."""
+        self.title_label.setText("Descargando Actualización")
+        self.status_label.setText("Iniciando descarga del paquete...")
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
+        self.action_button.hide()
+        self.close_button.setText("Cancelar")
+
+        if self.download_url:
+            self._downloader_worker = UpdateDownloaderWorker(self.download_url)
+            self._downloader_worker.progress_updated.connect(self._on_download_progress)
+            self._downloader_worker.download_finished.connect(self._on_download_finished)
+            self._downloader_worker.error_occurred.connect(self._on_download_error)
+            self._downloader_worker.start()
+
+    def _on_download_progress(self, downloaded: int, total: int) -> None:
+        """Updates live download progress percentage & megabytes label."""
+        if total > 0:
+            pct = int((downloaded / total) * 100)
+            mb_down = downloaded / (1024 * 1024)
+            mb_total = total / (1024 * 1024)
+            self.status_label.setText(
+                f"Descargando: <b>{mb_down:.1f} MB / {mb_total:.1f} MB ({pct}%)</b>"
+            )
+            self.progress_bar.setValue(pct)
+
+    def _on_download_finished(self, local_deb_path: str) -> None:
+        """Handles download completion and triggers pkexec installation."""
+        logger.info("Descarga completada en: %s. Iniciando instalación...", local_deb_path)
+        self.title_label.setText("Instalando Actualización")
+        self.status_label.setText("Solicitando autorización de superusuario para instalar...")
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(0)  # Pulse mode
+
+        self._installer_worker = UpdateInstallerWorker(local_deb_path)
+        self._installer_worker.install_finished.connect(self._on_install_finished)
+        self._installer_worker.error_occurred.connect(self._on_install_error)
+        self._installer_worker.start()
+
+    def _on_download_error(self, err_msg: str) -> None:
+        """Handles download error."""
+        logger.error("Error durante descarga de actualización: %s", err_msg)
+        self.set_error(f"Error de descarga: {err_msg}")
+
+    def _on_install_finished(self) -> None:
+        """Handles successful package installation completion."""
+        logger.info("Instalación completada exitosamente.")
+        self._is_install_complete = True
+        icon = get_gnome_icon("emblem-ok-symbolic")
+        if icon.isNull():
+            icon = get_gnome_icon("object-select-symbolic")
+        self.icon_label.setPixmap(icon.pixmap(40, 40))
+
+        self.title_label.setText("¡Actualización Completada!")
+        self.status_label.setText(
+            f"Se ha instalado <b>v{self.latest_version}</b> exitosamente.<br>"
+            "Reinicia la aplicación para disfrutar de los cambios."
+        )
+        self.progress_bar.hide()
+        self.action_button.setText("🔄 Reiniciar Aplicación")
+        self.action_button.show()
+        self.close_button.setText("Más tarde")
+
+    def _on_install_error(self, err_msg: str) -> None:
+        """Handles installation failure or user authorization cancellation."""
+        logger.warning("Instalación cancelada o fallida: %s", err_msg)
+        self.set_error(
+            "La instalación fue cancelada o no se otorgaron los permisos."
+        )
+
+    def _restart_app(self) -> None:
+        """Restarts Mis Apuntes application executable."""
+        logger.info("Reiniciando aplicación Mis Apuntes...")
+        exec_cmd = "/usr/bin/mis-apuntes" if os.path.exists("/usr/bin/mis-apuntes") else sys.executable
+        args = [] if exec_cmd == "/usr/bin/mis-apuntes" else sys.argv
+        QProcess.startDetached(exec_cmd, args)
+        app = QApplication.instance()
+        if app:
+            app.quit()
 
     def _on_retry_clicked(self) -> None:
         """Triggers retry signal and resets dialog to searching state."""
