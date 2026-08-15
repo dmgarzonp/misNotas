@@ -405,3 +405,14 @@ def test_create_note_icon_pixmaps(qapp, qtbot):
     sizes = icon.availableSizes()
     assert len(sizes) > 0
     assert any(s.width() == 24 for s in sizes)
+
+
+def test_about_dialog(qapp, qtbot):
+    from src.views.about_dialog import AboutDialog
+
+    dialog = AboutDialog()
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    assert dialog.windowTitle() == "Acerca de Mis Apuntes"
+    assert dialog.isVisible()

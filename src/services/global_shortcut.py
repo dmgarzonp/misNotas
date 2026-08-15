@@ -255,6 +255,14 @@ class QuickNoteManager(QObject):
         if update_action:
             update_action.triggered.connect(self._on_check_updates)
 
+        about_icon = get_gnome_icon("help-about-symbolic")
+        if about_icon.isNull():
+            about_icon = get_gnome_icon("dialog-information-symbolic")
+
+        about_action = self.menu.addAction(about_icon, "Acerca de Mis Apuntes")
+        if about_action:
+            about_action.triggered.connect(self._on_show_about)
+
         self.menu.addSeparator()
 
         # Exit Action
@@ -262,6 +270,13 @@ class QuickNoteManager(QObject):
         app = QApplication.instance()
         if quit_action and app:
             quit_action.triggered.connect(app.quit)
+
+    def _on_show_about(self) -> None:
+        """Displays About Dialog modal with version v1.0.1 details."""
+        from src.views.about_dialog import AboutDialog
+
+        dialog = AboutDialog()
+        dialog.exec()
 
     def _toggle_autostart(self, checked: bool) -> None:
         """Toggles system autostart entry."""
